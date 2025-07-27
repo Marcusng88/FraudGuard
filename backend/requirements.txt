@@ -1,0 +1,22 @@
+# Core FastAPI Backend - Hackathon Ready
+fastapi==0.104.1
+uvicorn==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-multipart==0.0.6
+
+# HTTP Client for API calls
+httpx==0.25.2
+
+# Environment and utilities
+python-dotenv==1.0.0
+
+# LangChain with Google Gemini
+langchain==0.1.0
+langchain-core==0.1.10
+langchain-google-genai==0.0.5
+langgraph==0.0.26
+
+# Optional: Add these for enhanced features
+# pillow==10.1.0
+# supabase==2.3.0

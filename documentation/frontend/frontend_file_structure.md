@@ -29,16 +29,15 @@ frontend/
      |    |--- 📄 loading.tsx     # Global loading component
      |    |--- 📄 error.tsx       # Global error boundary
      |    |
-     |    |--- 📂 marketplace/    # Main marketplace pages
-     |    |    |--- 📄 page.tsx   # Browse all NFTs
-     |    |    |--- 📄 loading.tsx
-     |    |    |--- 📂 [id]/      # Individual NFT details
-     |    |         |--- 📄 page.tsx
+     |    |--- 📂 marketplace/    # Main marketplace pages ✅ COMPLETED
+     |    |    |--- 📄 page.tsx   # Browse all NFTs ✅ COMPLETED
+     |    |    |--- 📂 [id]/      # Individual NFT details ✅ COMPLETED
+     |    |         |--- 📄 page.tsx # NFT details with fraud analysis ✅ COMPLETED
      |    |
-     |    |--- 📂 profile/        # User profile section
-     |    |    |--- 📄 page.tsx   # User's NFTs, transactions
-     |    |    |--- 📂 create/    # Mint new NFT
-     |    |         |--- 📄 page.tsx
+     |    |--- 📂 profile/        # User profile section ✅ COMPLETED
+     |    |    |--- 📄 page.tsx   # User's NFTs, transactions ✅ COMPLETED
+     |    |    |--- 📂 create/    # Mint new NFT ✅ COMPLETED
+     |    |         |--- 📄 page.tsx # Step-by-step NFT creation ✅ COMPLETED
      |    |
      |    |--- 📂 admin/          # Admin dashboard (future)
      |         |--- 📄 page.tsx   # Fraud detection dashboard
@@ -57,8 +56,6 @@ frontend/
      |    |
      |    |--- 📂 layout/         # Layout components
      |    |    |--- 📄 Header.tsx
-     |    |    |--- 📄 Footer.tsx
-     |    |    |--- 📄 Sidebar.tsx
      |    |    |--- 📄 Navigation.tsx
      |    |
      |    |--- 📂 web3/           # Web3 specific components

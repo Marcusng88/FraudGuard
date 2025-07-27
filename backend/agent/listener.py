@@ -1,0 +1,186 @@
+"""
+Sui blockchain event listener for FraudGuard
+Listens for NFT minting events and triggers fraud detection analysis
+"""
+import asyncio
+import logging
+from typing import Dict, Any
+from datetime import datetime
+
+try:
+    from core.config import settings
+    from agent.sui_client import sui_client, NFTData
+    from agent.fraud_detector import analyze_nft_for_fraud
+    from agent.supabase_client import supabase_client
+except ImportError:
+    from backend.core.config import settings
+    from backend.agent.sui_client import sui_client, NFTData
+    from backend.agent.fraud_detector import analyze_nft_for_fraud
+    from backend.agent.supabase_client import supabase_client
+
+logger = logging.getLogger(__name__)
+
+
+class SuiEventListener:
+    """Listens for Sui blockchain events and processes them"""
+
+    def __init__(self):
+        self.is_running = False
+        self.processed_events = set()  # Track processed events to avoid duplicates
+
+    async def start_listening(self):
+        """Start listening for blockchain events"""
+        logger.info("Starting Sui event listener...")
+        self.is_running = True
+
+        try:
+            # Initialize Sui client
+            if not await sui_client.initialize():
+                logger.error("Failed to initialize Sui client")
+                return
+
+            # Initialize Supabase client
+            if not await supabase_client.initialize():
+                logger.warning("Failed to initialize Supabase client - continuing without vector DB")
+
+            # Start listening for NFT events
+            await sui_client.listen_for_nft_events(self.process_nft_event)
+
+        except Exception as e:
+            logger.error(f"Error in event listener: {e}")
+        finally:
+            self.is_running = False
+            logger.info("Event listener stopped")
+
+    async def process_nft_event(self, event_data: Dict[str, Any]):
+        """Process an NFT minting event"""
+        try:
+            event_id = f"{event_data.get('nft_id', '')}_{event_data.get('creator', '')}"
+
+            # Skip if already processed
+            if event_id in self.processed_events:
+                return
+
+            self.processed_events.add(event_id)
+
+            logger.info(f"Processing NFT event: {event_data}")
+
+            # Extract NFT information from event
+            nft_id = event_data.get("nft_id")
+            if not nft_id:
+                logger.warning("No NFT ID in event data")
+                return
+
+            # Get full NFT data from blockchain
+            nft_data = await sui_client.get_nft_data(nft_id)
+            if not nft_data:
+                logger.warning(f"Could not retrieve NFT data for {nft_id}")
+                return
+
+            # Perform fraud analysis
+            logger.info(f"Starting fraud analysis for NFT {nft_id}")
+            fraud_result = await analyze_nft_for_fraud(nft_data)
+
+            # If fraud detected, create flag on blockchain
+            if fraud_result.is_fraud:
+                logger.warning(f"Fraud detected for NFT {nft_id}: {fraud_result.reason}")
+
+                flag_id = await sui_client.create_fraud_flag(
+                    nft_id=nft_id,
+                    flag_type=fraud_result.flag_type,
+                    confidence_score=int(fraud_result.confidence_score * 100),
+                    reason=fraud_result.reason,
+                    evidence_url=fraud_result.evidence_url
+                )
+
+                if flag_id:
+                    logger.info(f"Fraud flag created successfully: {flag_id}")
+                else:
+                    logger.error(f"Failed to create fraud flag for NFT {nft_id}")
+            else:
+                logger.info(f"No fraud detected for NFT {nft_id}")
+
+            # Store analysis results in Supabase
+            await self.store_analysis_result(nft_data, fraud_result)
+
+            # Cache NFT data for future reference
+            await supabase_client.cache_nft_data({
+                "nft_id": nft_data.object_id,
+                "creator": nft_data.creator,
+                "name": nft_data.name,
+                "description": nft_data.description,
+                "image_url": nft_data.image_url,
+                "metadata": nft_data.metadata,
+                "collection": nft_data.collection,
+                "created_at": nft_data.created_at
+            })
+
+        except Exception as e:
+            logger.error(f"Error processing NFT event: {e}")
+
+    async def store_analysis_result(self, nft_data: NFTData, fraud_result):
+        """Store analysis results in Supabase"""
+        try:
+            analysis_record = {
+                "is_fraud": fraud_result.is_fraud,
+                "confidence_score": fraud_result.confidence_score,
+                "flag_type": fraud_result.flag_type,
+                "reason": fraud_result.reason,
+                "details": fraud_result.details
+            }
+
+            # Store in Supabase
+            await supabase_client.store_analysis_result(
+                nft_id=nft_data.object_id,
+                analysis_type="langgraph_workflow",
+                result=analysis_record
+            )
+
+            logger.debug(f"Analysis result stored for NFT: {nft_data.object_id}")
+
+        except Exception as e:
+            logger.error(f"Error storing analysis result: {e}")
+
+    async def stop_listening(self):
+        """Stop the event listener"""
+        logger.info("Stopping event listener...")
+        self.is_running = False
+        await sui_client.close()
+
+
+# Global event listener instance
+event_listener = SuiEventListener()
+
+
+async def start_fraud_detection_service():
+    """Start the fraud detection service"""
+    logger.info("Starting FraudGuard detection service...")
+    await event_listener.start_listening()
+
+
+async def stop_fraud_detection_service():
+    """Stop the fraud detection service"""
+    logger.info("Stopping FraudGuard detection service...")
+    await event_listener.stop_listening()
+
+
+if __name__ == "__main__":
+    # For testing the listener directly
+    import sys
+    import signal
+
+    def signal_handler(sig, frame):
+        logger.info("Received interrupt signal")
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
+    # Run the listener
+    asyncio.run(start_fraud_detection_service())
