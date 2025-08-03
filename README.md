@@ -62,47 +62,19 @@ Your AI agent can't scan the *entire blockchain* for every new image. Instead, w
 5.  **Insert into Supabase:** Store the new, non-plagiarized image's vector for future checks.
 
 ---
+Follow these steps:
 
-## **📂 Proposed MVP File Structure**
+```sh
+# Step 1: Clone the repository using the project's Git URL.
+git clone <YOUR_GIT_URL>
 
-Here is a logical way to structure your project monorepo.
+# Step 2: Navigate to the project directory.
+cd <YOUR_PROJECT_NAME>
 
-```plaintext
-/fraudguard/
-|
-|--- 📄 README.md
-|--- 📄 package.json        # Main package file to run all services concurrently
-|
-|--- 📂 sui/                 # Sui Smart Contracts
-|    |
-|    |--- 📄 Move.toml
-|    |--- 📂 sources/
-|         |--- 📄 marketplace.move  # Core logic: list, buy, transfer
-|         |--- 📄 fraud_flag.move   # Logic for creating and attaching flags
-|
-|--- 📂 frontend/            # Next.js Application
-|    |
-|    |--- 📄 package.json
-|    |--- 📄 next.config.js
-|    |--- 📂 src/
-|         |--- 📂 app/         # App router structure
-|         |--- 📂 components/
-|         |    |--- MarketplaceGrid.tsx
-|         |    |--- NftCard.tsx
-|         |    |--- FraudWarningBanner.tsx
-|         |--- 📂 hooks/
-|         |    |--- useSuiNfts.ts    # Hook to fetch NFTs and fraud flags
-|         |--- 📂 utils/
-|              |--- sui.ts        # Sui client configuration
-|
-|--- 📂 backend/             # FastAPI & AI Agent
-     |
-     |--- 📄 requirements.txt
-     |--- 📄 main.py            # FastAPI app setup
-     |--- 📂 agent/
-     |    |--- 📄 __init__.py
-     |    |--- 📄 chain.py         # LangGraph/LangChain logic definition
-     |    |--- 📄 tools.py        # Tools for the agent (image analysis, sui tx signing)
-     |    |--- 📄 listener.py      # Service that listens to Sui RPC for new objects
-     |--- 📂 core/
-          |--- 📄 config.py      # Environment variables (SUI_RPC, SUPABASE_KEY)
+# Step 3: Install the necessary dependencies.
+npm i
+
+# Step 4: Start the development server with auto-reloading and an instant preview.
+npm run dev
+```
+

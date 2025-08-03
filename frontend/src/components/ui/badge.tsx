@@ -1,48 +1,36 @@
-import React from 'react';
-import { cn } from '../../lib/utils';
+import * as React from "react"
+import { cva, type VariantProps } from "class-variance-authority"
 
-export interface BadgeProps extends React.HTMLAttributes<HTMLDivElement> {
-  variant?: 'default' | 'safe' | 'warning' | 'danger' | 'info';
-  size?: 'sm' | 'md' | 'lg';
-  pulse?: boolean;
+import { cn } from "@/lib/utils"
+
+const badgeVariants = cva(
+  "inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2",
+  {
+    variants: {
+      variant: {
+        default:
+          "border-transparent bg-primary text-primary-foreground hover:bg-primary/80",
+        secondary:
+          "border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        destructive:
+          "border-transparent bg-destructive text-destructive-foreground hover:bg-destructive/80",
+        outline: "text-foreground",
+      },
+    },
+    defaultVariants: {
+      variant: "default",
+    },
+  }
+)
+
+export interface BadgeProps
+  extends React.HTMLAttributes<HTMLDivElement>,
+    VariantProps<typeof badgeVariants> {}
+
+function Badge({ className, variant, ...props }: BadgeProps) {
+  return (
+    <div className={cn(badgeVariants({ variant }), className)} {...props} />
+  )
 }
 
-const Badge = React.forwardRef<HTMLDivElement, BadgeProps>(
-  ({ className, variant = 'default', size = 'md', pulse = false, children, ...props }, ref) => {
-    const baseStyles = "inline-flex items-center rounded-full font-medium transition-all duration-200";
-    
-    const variants = {
-      default: "bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border)]",
-      safe: "fraud-indicator-safe",
-      warning: "fraud-indicator-warning", 
-      danger: "fraud-indicator-danger",
-      info: "bg-blue-500/10 text-blue-400 border border-blue-500/20",
-    };
-
-    const sizes = {
-      sm: "px-2 py-1 text-xs",
-      md: "px-3 py-1 text-sm",
-      lg: "px-4 py-2 text-base",
-    };
-
-    return (
-      <div
-        ref={ref}
-        className={cn(
-          baseStyles,
-          variants[variant],
-          sizes[size],
-          pulse && "animate-pulse",
-          className
-        )}
-        {...props}
-      >
-        {children}
-      </div>
-    );
-  }
-);
-
-Badge.displayName = "Badge";
-
-export { Badge };
+export { Badge, badgeVariants }
