@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     supabase_url: Optional[str] = Field(default=None, env="SUPABASE_URL")
     supabase_key: Optional[str] = Field(default=None, env="SUPABASE_KEY")
     supabase_db_url: Optional[str] = Field(default=None, env="SUPABASE_DB_URL")
+    supabase_db_password: Optional[str] = Field(default=None, env="SUPABASE_DB_PASSWORD")
+
+    # Pinata IPFS Configuration
+    pinata_api_key: Optional[str] = Field(default=None, env="PINATA_API_KEY")
+    pinata_secret_api_key: Optional[str] = Field(default=None, env="PINATA_SECRET_API_KEY")
+    pinata_jwt: Optional[str] = Field(default=None, env="PINATA_JWT")
 
     # Fraud Detection Configuration
     fraud_confidence_threshold: float = Field(default=0.7, env="FRAUD_CONFIDENCE_THRESHOLD")
@@ -68,6 +74,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = False
+        extra = "allow"  # Allow extra fields to prevent validation errors
 
 
 # Global settings instance
@@ -118,6 +125,25 @@ def get_fraud_detection_config() -> dict:
         "max_image_size_mb": settings.max_image_size_mb,
         "supported_formats": settings.supported_image_formats
     }
+
+
+def get_pinata_config() -> dict:
+    """Get Pinata IPFS configuration"""
+    return {
+        "api_key": settings.pinata_api_key,
+        "secret_api_key": settings.pinata_secret_api_key,
+        "jwt": settings.pinata_jwt
+    }
+
+
+def validate_pinata_config() -> bool:
+    """Validate Pinata configuration"""
+    required_fields = [
+        settings.pinata_api_key,
+        settings.pinata_secret_api_key,
+        settings.pinata_jwt
+    ]
+    return all(field is not None for field in required_fields)
 
 
 # Environment-specific configurations

@@ -1,13 +1,12 @@
 /// Fraud Flag Module for FraudGuard
 /// Handles AI-powered fraud detection flags for NFTs
 module fraudguard::fraud_flag {
-    use sui::object::{Self, UID, ID};
-    use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
+    use sui::object;
+    use sui::tx_context;
     use sui::event;
     use sui::table::{Self, Table};
     use std::string::{Self, String};
-    use std::vector;
+    use sui::transfer;
 
     // ===== Errors =====
     const ENotAuthorized: u64 = 0;

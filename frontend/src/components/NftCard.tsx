@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Shield, Eye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -39,15 +40,28 @@ const threatConfig = {
 };
 
 export function NftCard({ id, title, image, price, creator, flagged = false, threatLevel = 'safe' }: NftCardProps) {
+  const navigate = useNavigate();
   const config = threatConfig[threatLevel];
   const Icon = config.icon;
 
+  const handleCardClick = () => {
+    navigate(`/nft/${id}`);
+  };
+
+  const handleViewClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigate(`/nft/${id}`);
+  };
+
   return (
-    <Card className={`
-      glass-panel relative overflow-hidden group hover-glow
-      ${flagged ? 'fraud-alert border-destructive/50' : ''}
-      transition-all duration-300
-    `}>
+    <Card 
+      className={`
+        glass-panel relative overflow-hidden group hover-glow cursor-pointer
+        ${flagged ? 'fraud-alert border-destructive/50' : ''}
+        transition-all duration-300
+      `}
+      onClick={handleCardClick}
+    >
       {/* Threat indicator */}
       <div className={`absolute top-3 right-3 z-20 p-2 rounded-lg ${config.bg} ${config.border} border`}>
         <Icon className={`w-4 h-4 ${config.color}`} />
@@ -101,10 +115,11 @@ export function NftCard({ id, title, image, price, creator, flagged = false, thr
             variant={threatLevel === 'danger' ? 'fraud' : 'cyber'} 
             size="sm" 
             className="flex-1"
+            onClick={(e) => e.stopPropagation()}
           >
             {threatLevel === 'danger' ? 'Review' : 'Buy Now'}
           </Button>
-          <Button variant="glass" size="sm">
+          <Button variant="glass" size="sm" onClick={handleViewClick}>
             <Eye className="w-4 h-4" />
           </Button>
         </div>

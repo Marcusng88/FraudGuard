@@ -18,7 +18,7 @@ The system consists of four main pillars:
     *   **zkLogin:** Provides a seamless, social-login-based wallet experience for users.
 
 2.  **Frontend (The User Interface):**
-    *   **Framework:** React/Next.js with TypeScript.
+    *   **Framework:** Vite with React/TypeScript.
     *   **Responsibilities:** Wallet connection (zkLogin), minting NFTs, managing personal Kiosks (listing/delisting), browsing a global marketplace view, purchasing NFTs, and displaying AI-driven fraud warnings.
 
 3.  **Backend (The AI Brain):**
@@ -77,7 +77,7 @@ The intelligence layer that monitors the chain.
         *   Cache the NFT details, owner, price, and any attached `FraudFlag`s in a regular Supabase table.
         *   Create a FastAPI endpoint `/marketplace` that the frontend can call to get a paginated list of all for-sale NFTs. This avoids the frontend having to make many slow RPC calls.
 
-### Phase 3: Frontend Implementation (React/Next.js)
+### Phase 3: Frontend Implementation (Vite with React/TypeScript)
 
 Tying everything together for the user.
 

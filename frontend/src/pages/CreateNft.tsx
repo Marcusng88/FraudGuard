@@ -1,13 +1,23 @@
 import React, { useState, useRef } from 'react';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
+import { WalletConnection } from '@/components/WalletConnection';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
-import { Upload, Image, Shield, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Upload, Image, Shield, Zap, AlertTriangle, CheckCircle, ExternalLink } from 'lucide-react';
+import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
+import { toast } from '@/hooks/use-toast';
+import { 
+  uploadToPinata, 
+  createIPFSUrl, 
+  notifyBackendNewNFT,
+  PACKAGE_ID 
+} from '@/lib/sui-utils';
 
 interface FormData {
   title: string;
@@ -34,19 +44,50 @@ export default function CreateNft() {
     confidence: number;
     warnings: string[];
   } | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [txDigest, setTxDigest] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const account = useCurrentAccount();
+  const client = useSuiClient();
+  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+
+  // NFT Categories
+  const categories = [
+    'Art', 'Photography', 'Music', 'Gaming', 'Sports', 'Collectibles', 
+    '3D Art', 'Digital Art', 'Pixel Art', 'Abstract', 'Nature', 'Portrait'
+  ];
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      // Validate file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "Please select an image smaller than 10MB",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast({
+          title: "Invalid file type",
+          description: "Please select an image file",
+          variant: "destructive",
+        });
+        return;
+      }
+
       setFormData(prev => ({
         ...prev,
         image: file,
         preview: URL.createObjectURL(file)
       }));
       
-      // Simulate AI analysis
+      // Simulate AI analysis for now
       setTimeout(() => {
         const isSafe = Math.random() > 0.3; // 70% chance of being safe
         setAnalysisResult({
@@ -60,37 +101,161 @@ export default function CreateNft() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.image) return;
+    
+    if (!account) {
+      toast({
+        title: "Wallet not connected",
+        description: "Please connect your wallet to mint NFT",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    setIsUploading(true);
+    if (!formData.image || !formData.title.trim()) {
+      toast({
+        title: "Missing information",
+        description: "Please provide both image and title",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsProcessing(true);
     setUploadProgress(0);
 
-    // Simulate upload progress
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsUploading(false);
-          return 100;
-        }
-        return prev + 10;
+    try {
+      // Step 1: Upload image to Pinata
+      toast({
+        title: "Uploading image...",
+        description: "Uploading your NFT image to IPFS",
       });
-    }, 200);
+      
+      setUploadProgress(25);
+      const uploadResult = await uploadToPinata(formData.image);
+      const imageUrl = createIPFSUrl(uploadResult.IpfsHash);
+      
+      setUploadProgress(50);
 
-    // Here you would typically upload to your backend
-    // const formDataToSend = new FormData();
-    // formDataToSend.append('image', formData.image);
-    // formDataToSend.append('metadata', JSON.stringify({
-    //   title: formData.title,
-    //   description: formData.description,
-    //   price: formData.price,
-    //   category: formData.category
-    // }));
+      // Step 2: Create and execute mint transaction
+      toast({
+        title: "Creating NFT...",
+        description: "Minting your NFT on the Sui blockchain",
+      });
+
+      const tx = new Transaction();
+      
+      // Package is now deployed, proceed with minting
+      tx.moveCall({
+        target: `${PACKAGE_ID}::fraudguard_nft::mint_nft`,
+        arguments: [
+          tx.pure.vector('u8', Array.from(new TextEncoder().encode(formData.title))),
+          tx.pure.vector('u8', Array.from(new TextEncoder().encode(formData.description))),
+          tx.pure.vector('u8', Array.from(new TextEncoder().encode(imageUrl))),
+          tx.pure.address(account.address),
+        ],
+      });
+
+      setUploadProgress(75);
+
+      // Execute transaction
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: async (result) => {
+            setTxDigest(result.digest);
+            setUploadProgress(90);
+
+            try {
+              // Step 3: Get transaction details for NFT ID
+              const txResult = await client.getTransactionBlock({
+                digest: result.digest,
+                options: {
+                  showEvents: true,
+                  showEffects: true,
+                },
+              });
+
+              // Extract NFT ID from events
+              let nftId = 'unknown';
+              if (txResult.events) {
+                const mintEvent = txResult.events.find(event => 
+                  event.type.includes('NFTMinted')
+                );
+
+                if (mintEvent && mintEvent.parsedJson) {
+                  const eventData = mintEvent.parsedJson as { nft_id?: string };
+                  nftId = eventData.nft_id || 'unknown';
+                }
+              }
+
+              // Notify backend for fraud detection
+              const nftData = {
+                nftId,
+                name: formData.title,
+                description: formData.description,
+                imageUrl,
+                creator: account.address,
+              };
+
+              await notifyBackendNewNFT(nftData);
+
+              setUploadProgress(100);
+
+              toast({
+                title: "NFT created successfully!",
+                description: (
+                  <div className="flex items-center gap-2">
+                    <span>Your NFT has been minted</span>
+                    <a 
+                      href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      View Transaction <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ),
+              });
+
+              // Reset form
+              setFormData({
+                title: '',
+                description: '',
+                price: '',
+                category: '',
+                image: null,
+                preview: null
+              });
+              setAnalysisResult(null);
+
+            } catch (backendError) {
+              console.warn('Backend notification failed:', backendError);
+              // NFT was still minted successfully
+            }
+          },
+          onError: (error) => {
+            console.error('Transaction failed:', error);
+            toast({
+              title: "Minting failed",
+              description: error.message || "Failed to mint NFT. Please try again.",
+              variant: "destructive",
+            });
+          }
+        }
+      );
+
+    } catch (error) {
+      console.error('Error creating NFT:', error);
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to create NFT",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
-
-  const categories = [
-    'Digital Art', 'Photography', 'Music', 'Video', 'Collectibles', 'Gaming'
-  ];
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -124,6 +289,11 @@ export default function CreateNft() {
 
         <div className="relative z-10 container mx-auto px-6 text-center">
           <div className="max-w-4xl mx-auto space-y-8">
+            {/* Wallet Connection */}
+            <div className="flex justify-center mb-6">
+              <WalletConnection />
+            </div>
+
             {/* Main headline */}
             <div className="space-y-4">
               <h1 className="text-4xl md:text-6xl font-bold leading-tight">
@@ -135,7 +305,7 @@ export default function CreateNft() {
               </h1>
               
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-                Upload your digital artwork with AI-powered fraud protection and verification.
+                Upload your digital artwork with AI-powered fraud protection and verification on Sui blockchain.
               </p>
             </div>
 
@@ -149,13 +319,13 @@ export default function CreateNft() {
                 },
                 {
                   icon: Zap,
-                  title: 'Instant Analysis',
-                  description: 'Real-time content analysis and safety checks'
+                  title: 'Instant Minting',
+                  description: 'Fast NFT creation on Sui blockchain'
                 },
                 {
                   icon: CheckCircle,
-                  title: 'Verified Creation',
-                  description: 'Get verified status for your digital assets'
+                  title: 'IPFS Storage',
+                  description: 'Decentralized storage via Pinata'
                 }
               ].map((feature, index) => {
                 const Icon = feature.icon;
@@ -210,7 +380,7 @@ export default function CreateNft() {
                         type="button"
                         variant="cyber"
                         onClick={() => fileInputRef.current?.click()}
-                        disabled={isUploading}
+                        disabled={isProcessing}
                       >
                         <Image className="w-4 h-4" />
                         Choose File
@@ -272,18 +442,19 @@ export default function CreateNft() {
               {/* Form Fields */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4">
-                  <Label htmlFor="title" className="text-foreground">Title</Label>
+                  <Label htmlFor="title" className="text-foreground">Title *</Label>
                   <Input
                     id="title"
                     value={formData.title}
                     onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
                     placeholder="Enter NFT title"
                     className="bg-card/30 border-border/50"
+                    required
                   />
                 </div>
 
                 <div className="space-y-4">
-                  <Label htmlFor="price" className="text-foreground">Price (ETH)</Label>
+                  <Label htmlFor="price" className="text-foreground">Price (SUI)</Label>
                   <Input
                     id="price"
                     type="number"
@@ -306,6 +477,7 @@ export default function CreateNft() {
                       variant={formData.category === category ? 'cyber' : 'glass'}
                       size="sm"
                       onClick={() => setFormData(prev => ({ ...prev, category }))}
+                      disabled={isProcessing}
                     >
                       {category}
                     </Button>
@@ -326,10 +498,17 @@ export default function CreateNft() {
               </div>
 
               {/* Upload Progress */}
-              {isUploading && (
+              {isProcessing && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span>Uploading...</span>
+                    <span>
+                      {uploadProgress < 25 && "Preparing..."}
+                      {uploadProgress >= 25 && uploadProgress < 50 && "Uploading to IPFS..."}
+                      {uploadProgress >= 50 && uploadProgress < 75 && "Creating transaction..."}
+                      {uploadProgress >= 75 && uploadProgress < 90 && "Minting NFT..."}
+                      {uploadProgress >= 90 && uploadProgress < 100 && "Finalizing..."}
+                      {uploadProgress >= 100 && "Complete!"}
+                    </span>
                     <span>{uploadProgress}%</span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-2">
@@ -341,16 +520,41 @@ export default function CreateNft() {
                 </div>
               )}
 
+              {/* Transaction Result */}
+              {txDigest && (
+                <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-success">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-medium">NFT Created Successfully!</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Transaction: {txDigest.slice(0, 20)}...
+                  </p>
+                </div>
+              )}
+
               {/* Submit Button */}
               <Button
                 type="submit"
                 variant="cyber"
                 size="lg"
-                disabled={!formData.image || isUploading}
+                disabled={!formData.image || !formData.title.trim() || isProcessing || !account}
                 className="w-full"
               >
-                {isUploading ? 'Creating NFT...' : 'Create NFT'}
+                {!account ? (
+                  'Connect Wallet to Mint'
+                ) : isProcessing ? (
+                  'Creating NFT...'
+                ) : (
+                  'Create NFT'
+                )}
               </Button>
+
+              {!account && (
+                <p className="text-sm text-muted-foreground text-center">
+                  Connect your wallet to start minting NFTs
+                </p>
+              )}
             </form>
           </div>
         </section>

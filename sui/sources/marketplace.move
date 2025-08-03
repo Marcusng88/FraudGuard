@@ -1,14 +1,13 @@
 /// Marketplace Module for FraudGuard
 /// Handles NFT listing, buying, and marketplace operations
 module fraudguard::marketplace {
-    use sui::object::{Self, UID, ID};
-    use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
+    use sui::object;
+    use sui::tx_context;
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::event;
     use sui::balance::{Self, Balance};
-    // Remove unused string import
+    use sui::transfer;
     use fraudguard::nft::{Self, NFT};
 
     // ===== Errors =====

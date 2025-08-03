@@ -28,12 +28,16 @@ try:
     from agent.listener import start_fraud_detection_service, stop_fraud_detection_service
     from agent.sui_client import sui_client
     from agent.fraud_detector import analyze_nft_for_fraud, NFTData
+    from api.marketplace import router as marketplace_router
+    from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
     from backend.core.config import settings, validate_sui_config, validate_ai_config
     from backend.agent.listener import start_fraud_detection_service, stop_fraud_detection_service
     from backend.agent.sui_client import sui_client
     from backend.agent.fraud_detector import analyze_nft_for_fraud, NFTData
+    from backend.api.marketplace import router as marketplace_router
+    from backend.database.connection import create_tables
 
 # Configure logging
 logging.basicConfig(
@@ -93,6 +97,9 @@ async def lifespan(app):
 
     logger.info("Starting FraudGuard backend...")
 
+    # Create database tables
+    create_tables()
+
     # Validate configuration
     if not validate_sui_config():
         logger.warning("Sui configuration incomplete - some features may not work")
@@ -124,11 +131,15 @@ if FastAPI:
     # Add CORS middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://localhost:3001"],  # Frontend URLs
+        allow_origins=["*"],  # Allow all origins for development
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    
+    # Include marketplace routes
+    app.include_router(marketplace_router)
+    
 else:
     app = None
     logger.warning("FastAPI not available - running in mock mode")

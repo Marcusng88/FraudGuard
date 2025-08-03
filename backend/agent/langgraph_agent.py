@@ -84,6 +84,7 @@ class FraudDetectionAgent:
                     google_api_key=google_api_key
                 )
 
+                # Use synchronous embeddings to avoid event loop conflicts
                 self.embeddings = GoogleGenerativeAIEmbeddings(
                     model="models/embedding-001",
                     google_api_key=google_api_key
@@ -141,6 +142,8 @@ class FraudDetectionAgent:
             state["current_step"] = "analyze_image"
             
             nft_data = state["nft_data"]
+            image_url = nft_data["image_url"]
+            logger.info(f"Analyzing image at URL: {image_url}")
             
             if not self.llm:
                 # Mock analysis for development
@@ -149,9 +152,24 @@ class FraudDetectionAgent:
                     "content_type": "digital_art",
                     "quality_score": 0.8,
                     "suspicious_elements": [],
-                    "analysis_confidence": 0.7
+                    "analysis_confidence": 0.7,
+                    "image_retrieved": True,
+                    "image_url": image_url
                 }
+                logger.info("Using mock image analysis (no LLM configured)")
                 return state
+            
+            # Verify image accessibility
+            image_accessible = True
+            try:
+                import requests
+                response = requests.head(image_url, timeout=10)
+                if response.status_code != 200:
+                    logger.warning(f"Image URL not accessible: {image_url} (status: {response.status_code})")
+                    image_accessible = False
+            except Exception as img_error:
+                logger.warning(f"Could not verify image accessibility: {img_error}")
+                image_accessible = False
             
             # Create prompt for image analysis
             prompt = ChatPromptTemplate.from_messages([
@@ -171,14 +189,15 @@ class FraudDetectionAgent:
                 - suspicious_elements (list of strings)
                 - analysis_confidence (0-1)
                 """),
-                ("human", "NFT Name: {name}\nDescription: {description}\nImage URL: {image_url}")
+                ("human", "NFT Name: {name}\nDescription: {description}\nImage URL: {image_url}\nImage Accessible: {image_accessible}")
             ])
             
             # Format the prompt
             formatted_prompt = prompt.format_messages(
                 name=nft_data["name"],
                 description=nft_data["description"],
-                image_url=nft_data["image_url"]
+                image_url=image_url,
+                image_accessible=image_accessible
             )
             
             # Get AI analysis
@@ -186,7 +205,23 @@ class FraudDetectionAgent:
             
             # Parse JSON response
             parser = JsonOutputParser()
-            analysis_result = parser.parse(response.content)
+            try:
+                analysis_result = parser.parse(response.content)
+                analysis_result["image_retrieved"] = image_accessible
+                analysis_result["image_url"] = image_url
+            except Exception as parse_error:
+                logger.warning(f"Failed to parse AI response as JSON: {parse_error}")
+                # Fallback analysis
+                analysis_result = {
+                    "is_ai_generated": False,
+                    "content_type": "digital_art",
+                    "quality_score": 0.6,
+                    "suspicious_elements": ["AI response parsing failed"],
+                    "analysis_confidence": 0.5,
+                    "image_retrieved": image_accessible,
+                    "image_url": image_url,
+                    "parse_error": str(parse_error)
+                }
             
             state["image_analysis"] = analysis_result
             state["messages"].append({
@@ -195,11 +230,21 @@ class FraudDetectionAgent:
                 "timestamp": datetime.now().isoformat()
             })
             
+            logger.info(f"Image analysis completed. AI Generated: {analysis_result.get('is_ai_generated')}, Quality: {analysis_result.get('quality_score')}")
             return state
             
         except Exception as e:
             logger.error(f"Error in image analysis step: {e}")
             state["error"] = f"Image analysis failed: {str(e)}"
+            # Provide fallback analysis
+            state["image_analysis"] = {
+                "is_ai_generated": False,
+                "content_type": "unknown",
+                "quality_score": 0.5,
+                "suspicious_elements": ["Analysis failed"],
+                "analysis_confidence": 0.1,
+                "error": str(e)
+            }
             return state
     
     async def check_similarity_step(self, state: AgentState) -> AgentState:
@@ -222,10 +267,21 @@ class FraudDetectionAgent:
             
             # Download and process image
             image_url = nft_data["image_url"]
+            logger.info(f"Processing image URL: {image_url}")
             
             # Generate embedding for the image (simplified - would need image-to-text first)
             image_description = f"NFT image: {nft_data['name']} - {nft_data['description']}"
-            image_embedding = await self.embeddings.aembed_query(image_description)
+            
+            # Fix async/event loop issue by using sync embedding with proper error handling
+            try:
+                # Use embed_query instead of aembed_query to avoid event loop conflicts
+                image_embedding = self.embeddings.embed_query(image_description)
+                logger.info(f"Generated embedding of length: {len(image_embedding)}")
+            except Exception as embed_error:
+                logger.error(f"Error generating embedding: {embed_error}")
+                # Fall back to mock embedding
+                image_embedding = [0.0] * 1536  # Standard embedding dimension
+                logger.info("Using mock embedding due to embedding error")
             
             # Search for similar images in Supabase vector database
             similar_results = await supabase_client.search_similar_images(
@@ -238,7 +294,9 @@ class FraudDetectionAgent:
                 "is_similar": len(similar_results) > 0,
                 "max_similarity": max([r["similarity"] for r in similar_results]) if similar_results else 0.0,
                 "similar_nfts": [r["nft_id"] for r in similar_results],
-                "similarity_threshold": 0.85
+                "similarity_threshold": 0.85,
+                "image_processed": True,
+                "embedding_generated": len(image_embedding) > 0
             }
             
             state["messages"].append({
@@ -247,11 +305,20 @@ class FraudDetectionAgent:
                 "timestamp": datetime.now().isoformat()
             })
             
+            logger.info(f"Similarity check completed. Found {len(similar_results)} similar images")
             return state
             
         except Exception as e:
             logger.error(f"Error in similarity check step: {e}")
             state["error"] = f"Similarity check failed: {str(e)}"
+            # Return state with error but continue workflow
+            state["similarity_results"] = {
+                "is_similar": False,
+                "max_similarity": 0.0,
+                "similar_nfts": [],
+                "similarity_threshold": 0.85,
+                "error": str(e)
+            }
             return state
     
     async def analyze_behavior_step(self, state: AgentState) -> AgentState:
@@ -262,15 +329,22 @@ class FraudDetectionAgent:
             
             nft_data = state["nft_data"]
             creator_address = nft_data["creator"]
+            logger.info(f"Analyzing behavior for creator: {creator_address}")
             
             # Get wallet activity from Sui blockchain
-            activity = await sui_client.get_wallet_activity(creator_address, hours=24)
+            try:
+                activity = await sui_client.get_wallet_activity(creator_address, hours=24)
+                logger.info(f"Retrieved wallet activity: {len(activity.get('transactions', []))} transactions")
+            except Exception as activity_error:
+                logger.warning(f"Could not retrieve wallet activity: {activity_error}")
+                activity = {"transactions": [], "error": str(activity_error)}
             
             # Analyze patterns using LLM
             if self.llm:
                 # Use Google Gemini for behavior analysis
                 prompt_text = f"""Analyze this wallet behavior for suspicious NFT minting patterns:
 
+Wallet Address: {creator_address}
 Wallet Activity: {str(activity)}
 NFT Name: {nft_data["name"]}
 
@@ -285,26 +359,31 @@ Respond in JSON format with:
 - suspicious_indicators (list of strings)
 - behavior_type (string)"""
 
-                response = await self.llm.ainvoke(prompt_text)
-
                 try:
+                    response = await self.llm.ainvoke(prompt_text)
                     # Try to parse JSON response
                     import json
                     behavior_analysis = json.loads(response.content)
-                except:
+                    logger.info(f"AI behavior analysis completed. Risk score: {behavior_analysis.get('risk_score', 'unknown')}")
+                except Exception as ai_error:
+                    logger.warning(f"AI behavior analysis failed: {ai_error}")
                     # Fallback if JSON parsing fails
                     behavior_analysis = {
                         "risk_score": 0.3,
-                        "suspicious_indicators": ["AI analysis completed"],
-                        "behavior_type": "analyzed"
+                        "suspicious_indicators": ["AI analysis completed with fallback"],
+                        "behavior_type": "analyzed_with_fallback",
+                        "ai_error": str(ai_error)
                     }
             else:
-                # Mock behavior analysis
+                # Mock behavior analysis with some basic logic
+                transaction_count = len(activity.get("transactions", []))
                 behavior_analysis = {
-                    "risk_score": 0.2,
-                    "suspicious_indicators": [],
-                    "behavior_type": "normal"
+                    "risk_score": min(0.1 + (transaction_count * 0.1), 0.8),
+                    "suspicious_indicators": [] if transaction_count < 5 else ["High transaction frequency"],
+                    "behavior_type": "mock_analysis",
+                    "transaction_count": transaction_count
                 }
+                logger.info("Using mock behavior analysis (no LLM configured)")
             
             state["behavior_analysis"] = behavior_analysis
             state["messages"].append({
@@ -318,6 +397,13 @@ Respond in JSON format with:
         except Exception as e:
             logger.error(f"Error in behavior analysis step: {e}")
             state["error"] = f"Behavior analysis failed: {str(e)}"
+            # Provide fallback analysis
+            state["behavior_analysis"] = {
+                "risk_score": 0.2,
+                "suspicious_indicators": ["Analysis failed"],
+                "behavior_type": "error_fallback",
+                "error": str(e)
+            }
             return state
     
     async def analyze_metadata_step(self, state: AgentState) -> AgentState:
@@ -327,6 +413,7 @@ Respond in JSON format with:
             state["current_step"] = "analyze_metadata"
             
             nft_data = state["nft_data"]
+            logger.info(f"Analyzing metadata for NFT: {nft_data['name']}")
             
             if self.llm:
                 prompt = ChatPromptTemplate.from_messages([
@@ -347,16 +434,55 @@ Respond in JSON format with:
                 ])
                 
                 formatted_prompt = prompt.format_messages(nft_data=str(nft_data))
-                response = await self.llm.ainvoke(formatted_prompt)
-                parser = JsonOutputParser()
-                metadata_analysis = parser.parse(response.content)
+                
+                try:
+                    response = await self.llm.ainvoke(formatted_prompt)
+                    parser = JsonOutputParser()
+                    metadata_analysis = parser.parse(response.content)
+                    logger.info(f"AI metadata analysis completed. Risk score: {metadata_analysis.get('risk_score', 'unknown')}")
+                except Exception as ai_error:
+                    logger.warning(f"AI metadata analysis failed: {ai_error}")
+                    # Fallback metadata analysis
+                    metadata_analysis = {
+                        "risk_score": 0.2,
+                        "quality_assessment": "analysis_failed",
+                        "suspicious_indicators": ["AI analysis failed"],
+                        "ai_error": str(ai_error)
+                    }
             else:
-                # Mock metadata analysis
+                # Mock metadata analysis with basic checks
+                name_length = len(nft_data.get("name", ""))
+                desc_length = len(nft_data.get("description", ""))
+                
+                # Basic quality checks
+                quality_indicators = []
+                risk_score = 0.0
+                
+                if name_length < 3:
+                    quality_indicators.append("Very short name")
+                    risk_score += 0.2
+                
+                if desc_length < 10:
+                    quality_indicators.append("Very short description")
+                    risk_score += 0.1
+                
+                # Check for suspicious keywords
+                suspicious_words = ["copy", "fake", "replica", "stolen", "pirated"]
+                text_to_check = f"{nft_data.get('name', '')} {nft_data.get('description', '')}".lower()
+                
+                for word in suspicious_words:
+                    if word in text_to_check:
+                        quality_indicators.append(f"Contains suspicious word: {word}")
+                        risk_score += 0.3
+                
                 metadata_analysis = {
-                    "risk_score": 0.1,
-                    "quality_assessment": "good",
-                    "suspicious_indicators": []
+                    "risk_score": min(risk_score, 1.0),
+                    "quality_assessment": "mock_analysis",
+                    "suspicious_indicators": quality_indicators,
+                    "name_length": name_length,
+                    "description_length": desc_length
                 }
+                logger.info("Using mock metadata analysis (no LLM configured)")
             
             state["metadata_analysis"] = metadata_analysis
             state["messages"].append({
@@ -370,6 +496,13 @@ Respond in JSON format with:
         except Exception as e:
             logger.error(f"Error in metadata analysis step: {e}")
             state["error"] = f"Metadata analysis failed: {str(e)}"
+            # Provide fallback analysis
+            state["metadata_analysis"] = {
+                "risk_score": 0.1,
+                "quality_assessment": "error_fallback",
+                "suspicious_indicators": ["Analysis failed"],
+                "error": str(e)
+            }
             return state
 
     async def make_decision_step(self, state: AgentState) -> AgentState:
@@ -378,11 +511,13 @@ Respond in JSON format with:
             logger.info("Step 5: Making fraud decision")
             state["current_step"] = "make_decision"
 
-            # Gather all analysis results
+            # Gather all analysis results with safe defaults
             image_analysis = state.get("image_analysis", {})
             similarity_results = state.get("similarity_results", {})
             behavior_analysis = state.get("behavior_analysis", {})
             metadata_analysis = state.get("metadata_analysis", {})
+
+            logger.info(f"Analysis summary - Image: {bool(image_analysis)}, Similarity: {bool(similarity_results)}, Behavior: {bool(behavior_analysis)}, Metadata: {bool(metadata_analysis)}")
 
             if self.llm:
                 # Use Google Gemini for final fraud decision
@@ -407,42 +542,71 @@ Respond in JSON format with:
 - reason (string explaining the decision)
 - primary_concern (string)"""
 
-                response = await self.llm.ainvoke(decision_prompt)
-
                 try:
+                    response = await self.llm.ainvoke(decision_prompt)
                     import json
                     fraud_decision = json.loads(response.content)
-                except:
+                    logger.info(f"AI fraud decision: {fraud_decision.get('is_fraud', 'unknown')} (confidence: {fraud_decision.get('confidence_score', 'unknown')})")
+                except Exception as ai_error:
+                    logger.warning(f"AI decision failed, using fallback logic: {ai_error}")
                     # Fallback decision logic
                     similarity_score = similarity_results.get("max_similarity", 0.0)
                     behavior_risk = behavior_analysis.get("risk_score", 0.0)
                     metadata_risk = metadata_analysis.get("risk_score", 0.0)
+                    image_risk = 0.3 if image_analysis.get("is_ai_generated", False) else 0.1
 
-                    total_risk = (similarity_score * 0.5) + (behavior_risk * 0.3) + (metadata_risk * 0.2)
+                    total_risk = (similarity_score * 0.4) + (behavior_risk * 0.25) + (metadata_risk * 0.25) + (image_risk * 0.1)
 
                     fraud_decision = {
                         "is_fraud": total_risk > 0.6,
                         "confidence_score": min(total_risk, 1.0),
-                        "flag_type": 1 if similarity_score > 0.8 else 2,
+                        "flag_type": 1 if similarity_score > 0.8 else 2 if behavior_risk > 0.5 else 3,
                         "reason": f"AI analysis with fallback scoring: {total_risk:.2f}",
-                        "primary_concern": "similarity" if similarity_score > 0.8 else "behavior"
+                        "primary_concern": "similarity" if similarity_score > 0.8 else "behavior" if behavior_risk > 0.5 else "metadata",
+                        "ai_error": str(ai_error)
                     }
             else:
-                # Mock decision logic
+                # Mock decision logic with detailed scoring
                 similarity_score = similarity_results.get("max_similarity", 0.0)
                 behavior_risk = behavior_analysis.get("risk_score", 0.0)
                 metadata_risk = metadata_analysis.get("risk_score", 0.0)
+                
+                # Enhanced scoring with image analysis
+                image_risk = 0.0
+                if image_analysis.get("is_ai_generated", False):
+                    image_risk += 0.3
+                if image_analysis.get("quality_score", 1.0) < 0.5:
+                    image_risk += 0.2
+                if len(image_analysis.get("suspicious_elements", [])) > 0:
+                    image_risk += 0.1
 
-                # Simple scoring algorithm
-                total_risk = (similarity_score * 0.5) + (behavior_risk * 0.3) + (metadata_risk * 0.2)
+                # Weighted scoring algorithm
+                total_risk = (similarity_score * 0.4) + (behavior_risk * 0.25) + (metadata_risk * 0.25) + (image_risk * 0.1)
+
+                # Determine primary concern
+                concerns = [
+                    ("similarity", similarity_score),
+                    ("behavior", behavior_risk),
+                    ("metadata", metadata_risk),
+                    ("image", image_risk)
+                ]
+                primary_concern = max(concerns, key=lambda x: x[1])[0]
 
                 fraud_decision = {
                     "is_fraud": total_risk > 0.6,
                     "confidence_score": min(total_risk, 1.0),
-                    "flag_type": 1 if similarity_score > 0.8 else 2 if behavior_risk > 0.5 else 3,
-                    "reason": f"Combined risk score: {total_risk:.2f}",
-                    "primary_concern": "similarity" if similarity_score > 0.8 else "behavior"
+                    "flag_type": 1 if similarity_score > 0.8 else 2 if behavior_risk > 0.5 else 3 if metadata_risk > 0.4 else 4,
+                    "reason": f"Combined risk score: {total_risk:.2f} (similarity: {similarity_score:.2f}, behavior: {behavior_risk:.2f}, metadata: {metadata_risk:.2f}, image: {image_risk:.2f})",
+                    "primary_concern": primary_concern,
+                    "risk_breakdown": {
+                        "similarity": similarity_score,
+                        "behavior": behavior_risk,
+                        "metadata": metadata_risk,
+                        "image": image_risk,
+                        "total": total_risk
+                    }
                 }
+                logger.info("Using enhanced mock decision logic (no LLM configured)")
 
             state["fraud_decision"] = fraud_decision
             state["messages"].append({
@@ -451,10 +615,25 @@ Respond in JSON format with:
                 "timestamp": datetime.now().isoformat()
             })
 
+            logger.info(f"Final fraud decision: {'FRAUD' if fraud_decision['is_fraud'] else 'CLEAN'} (confidence: {fraud_decision['confidence_score']:.2f})")
+            return state
+            
+        except Exception as e:
+            logger.error(f"Error in decision making step: {e}")
+            state["error"] = f"Decision making failed: {str(e)}"
+            # Provide safe fallback decision
+            state["fraud_decision"] = {
+                "is_fraud": False,
+                "confidence_score": 0.1,
+                "flag_type": 0,
+                "reason": f"Decision process failed: {str(e)}",
+                "primary_concern": "system_error",
+                "error": str(e)
+            }
             return state
 
         except Exception as e:
-            logger.error(f"Error in decision step: {e}")
+            logger.error(f"Error in decision making step: {e}")
             state["error"] = f"Decision making failed: {str(e)}"
             return state
 
