@@ -1,8 +1,11 @@
 import React from 'react';
 import { Shield, Zap, BarChart3 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { useNavigate } from 'react-router-dom';
 
 export function DashboardHero() {
+  const navigate = useNavigate();
+
   return (
     <section className="relative py-20 overflow-hidden">
       {/* Animated background */}
@@ -33,9 +36,9 @@ export function DashboardHero() {
               Trade NFTs
               <br />
               with{' '}
-              <span className="text-primary neon-text">
-                Confidence
-              </span>
+                              <span className="text-primary" style={{ textShadow: '0 0 5px hsl(var(--primary))' }}>
+                  Confidence
+                </span>
             </h1>
             
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
@@ -46,11 +49,21 @@ export function DashboardHero() {
 
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-            <Button variant="cyber" size="lg" className="gap-3 px-8">
+            <Button 
+              variant="cyber" 
+              size="lg" 
+              className="gap-3 px-8"
+              onClick={() => navigate('/marketplace')}
+            >
               <BarChart3 className="w-5 h-5" />
               Explore Marketplace
             </Button>
-            <Button variant="glow" size="lg" className="gap-3 px-8">
+            <Button 
+              variant="glow" 
+              size="lg" 
+              className="gap-3 px-8"
+              onClick={() => navigate('/create')}
+            >
               <Zap className="w-5 h-5" />
               Create NFT
             </Button>

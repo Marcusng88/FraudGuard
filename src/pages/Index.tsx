@@ -9,25 +9,25 @@ import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
 const mockNfts = [
   {
     id: '1',
-    title: 'Cyber Punk #001',
-    image: 'https://images.unsplash.com/photo-1634193295627-1cdddf751ebf?w=400&h=400&fit=crop',
-    price: '2.5 ETH',
+    title: 'Cyber Punk',
+    image: 'https://i.pinimg.com/736x/f5/71/b6/f571b6d34fca38fdf580f788a223a9be.jpg?w=400&h=400&fit=crop',
+    price: '2.5 SUI',
     creator: 'CyberArtist',
     threatLevel: 'safe' as const
   },
   {
     id: '2',
     title: 'Digital Dreams',
-    image: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&h=400&fit=crop',
-    price: '1.8 ETH',
+    image: 'https://i.pinimg.com/736x/90/56/d3/9056d37cff0fcead7492b2a4fb4b01cf.jpg?w=400&h=400&fit=crop',
+    price: '1.8 SUI',
     creator: 'PixelMaster',
     threatLevel: 'warning' as const
   },
   {
     id: '3',
     title: 'Neon Genesis',
-    image: 'https://images.unsplash.com/photo-1634224088880-42dac6eb0fab?w=400&h=400&fit=crop',
-    price: '3.2 ETH',
+    image: 'https://i.pinimg.com/1200x/25/5e/6a/255e6a9ce78282a79d736713a65c289b.jpg?w=400&h=400&fit=crop',
+    price: '3.2 SUI',
     creator: 'NeonCreator',
     flagged: true,
     threatLevel: 'danger' as const

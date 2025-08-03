@@ -100,7 +100,7 @@
   }
 
   .neon-text {
-    text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor;
+    text-shadow: 0 0 5px currentColor, 0 0 10px currentColor;
   }
 
   .cyber-border {
@@ -125,6 +125,26 @@
   .hover-glow:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-glow);
+  }
+
+  .button-glow {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .button-glow::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
+    transition: left 0.5s;
+  }
+
+  .button-glow:hover::before {
+    left: 100%;
   }
 }
 
