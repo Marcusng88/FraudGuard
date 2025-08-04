@@ -6,8 +6,11 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { createNetworkConfig, SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
 import { getFullnodeUrl } from '@mysten/sui/client';
 import '@mysten/dapp-kit/dist/index.css';
+import { AuthProvider } from './contexts/AuthContext';
+import { ProtectedRoute } from './components/ProtectedRoute';
 
 import Index from "./pages/Index";
+import Dashboard from "./pages/Dashboard";
 import Marketplace from "./pages/Marketplace";
 import CreateNft from "./pages/CreateNft";
 import Profile from "./pages/Profile";
@@ -27,21 +30,24 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <SuiClientProvider networks={networkConfig} defaultNetwork="testnet">
       <WalletProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/marketplace" element={<Marketplace />} />
-              <Route path="/nft/:nftId" element={<NFTDetail />} />
-              <Route path="/create" element={<CreateNft />} />
-              <Route path="/profile" element={<Profile />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
-        </TooltipProvider>
+        <AuthProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
+                <Route path="/nft/:nftId" element={<ProtectedRoute><NFTDetail /></ProtectedRoute>} />
+                <Route path="/create" element={<ProtectedRoute><CreateNft /></ProtectedRoute>} />
+                <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </TooltipProvider>
+        </AuthProvider>
       </WalletProvider>
     </SuiClientProvider>
   </QueryClientProvider>
