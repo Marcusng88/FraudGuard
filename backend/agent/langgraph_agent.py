@@ -12,6 +12,42 @@ from datetime import datetime
 try:
     from langgraph.graph import StateGraph, END
     from langchain_core.messages import HumanMessage, AIMessage
+    from langchain_google_genai import ChatGoogleGenerativeAI
+    from langchain_google_vertexai import VertexAIEmbeddings
+    from langchain_core.prompts import ChatPromptTemplate
+    from langchain_core.output_parsers import JsonOutputParser
+except ImportError:
+    # Fallback for development without dependencies
+    StateGraph = None
+    END = None
+    HumanMessage = None
+    AIMessage = None
+    ChatGoogleGenerativeAI = None
+    VertexAIEmbeddings = None
+    ChatPromptTemplate = None
+    JsonOutputParser = None
+
+try:
+    from core.config import settings
+    from agent.sui_client import NFTData, sui_client
+    from agent.supabase_client import supabase_client
+except ImportError:
+    from backend.core.config import settings
+    from backend.agent.sui_client import NFTData, sui_client
+    from backend.agent.supabase_client import supabase_client
+
+logger = logging.getLogger(__name__)
+import asyncio
+import logging
+from typing import Dict, List, Optional, Any, TypedDict
+from dataclasses import dataclass
+from datetime import datetime
+from langchain_google_vertexai.embeddings import VertexAIEmbeddings
+
+# Note: These imports will work once dependencies are installed
+try:
+    from langgraph.graph import StateGraph, END
+    from langchain_core.messages import HumanMessage, AIMessage
     from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
     from langchain_core.prompts import ChatPromptTemplate
     from langchain_core.output_parsers import JsonOutputParser
@@ -76,6 +112,8 @@ class FraudDetectionAgent:
         try:
             # Check if Google API key is available
             google_api_key = settings.google_api_key if hasattr(settings, 'google_api_key') else None
+            project_id = settings.project_id if hasattr(settings, 'project_id') else None
+            location = settings.location if hasattr(settings, 'location') else "us-central1"
 
             if ChatGoogleGenerativeAI and google_api_key:
                 self.llm = ChatGoogleGenerativeAI(
@@ -84,14 +122,16 @@ class FraudDetectionAgent:
                     google_api_key=google_api_key
                 )
 
-                # Use synchronous embeddings to avoid event loop conflicts
-                self.embeddings = GoogleGenerativeAIEmbeddings(
-                    model="models/embedding-001",
-                    google_api_key=google_api_key
+                # Use Vertex AI embeddings instead of Google Generative AI embeddings
+                self.embeddings = VertexAIEmbeddings(
+                    model_name="textembedding-gecko@latest",
+                    google_api_key=google_api_key,
+                    project=project_id,
+                    location=location
                 )
 
                 self.graph = self.create_workflow_graph()
-                logger.info("LangGraph agent initialized with Google Gemini successfully")
+                logger.info("LangGraph agent initialized with Google Gemini and Vertex AI embeddings successfully")
             else:
                 logger.warning("Google API key not configured, using simple rule-based analysis")
                 self.graph = self.create_workflow_graph()  # Still create graph for structure

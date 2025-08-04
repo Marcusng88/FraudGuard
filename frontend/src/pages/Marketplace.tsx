@@ -8,7 +8,6 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Search, Filter, Grid3X3, List, Shield, AlertTriangle, Eye, Loader2 } from 'lucide-react';
 import { useMarketplaceNFTs, useMarketplaceStats } from '@/hooks/useMarketplace';
-import { MarketplaceFilters } from '@/lib/api';
 
 const Marketplace = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -17,22 +16,10 @@ const Marketplace = () => {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Build filters for API call
-  const filters = useMemo((): MarketplaceFilters => {
-    const apiFilters: MarketplaceFilters = {
-      page: currentPage,
-      limit: 20,
-    };
-
-    if (searchTerm.trim()) {
-      apiFilters.search = searchTerm.trim();
-    }
-
-    if (selectedFilter !== 'all') {
-      apiFilters.threat_level = selectedFilter as 'safe' | 'warning' | 'danger';
-    }
-
-    return apiFilters;
-  }, [searchTerm, selectedFilter, currentPage]);
+  const filters = useMemo(() => ({
+    page: currentPage,
+    limit: 20,
+  }), [currentPage]);
 
   // Fetch marketplace data
   const { data: marketplaceData, isLoading, error, refetch } = useMarketplaceNFTs(filters);
@@ -55,7 +42,7 @@ const Marketplace = () => {
     { 
       label: 'All', 
       value: 'all', 
-      count: stats?.active_listings || 0 
+      count: stats?.total_nfts || 0 
     },
     { 
       label: 'Safe', 
@@ -74,7 +61,34 @@ const Marketplace = () => {
     }
   ], [stats]);
 
-  const nfts = marketplaceData?.nfts || [];
+  // Filter NFTs based on current criteria
+  const filteredNFTs = useMemo(() => {
+    let nfts = marketplaceData?.nfts || [];
+    
+    // Apply search filter
+    if (searchTerm.trim()) {
+      const search = searchTerm.toLowerCase();
+      nfts = nfts.filter(nft => 
+        nft.title.toLowerCase().includes(search) ||
+        (nft.description && nft.description.toLowerCase().includes(search)) ||
+        nft.category.toLowerCase().includes(search)
+      );
+    }
+    
+    // Apply safety filter
+    if (selectedFilter !== 'all') {
+      if (selectedFilter === 'safe') {
+        nfts = nfts.filter(nft => !nft.is_fraud && nft.confidence_score >= 0.8);
+      } else if (selectedFilter === 'warning') {
+        nfts = nfts.filter(nft => !nft.is_fraud && nft.confidence_score < 0.8);
+      } else if (selectedFilter === 'danger') {
+        nfts = nfts.filter(nft => nft.is_fraud);
+      }
+    }
+    
+    return nfts;
+  }, [marketplaceData?.nfts, searchTerm, selectedFilter]);
+
   const totalPages = marketplaceData?.total_pages || 1;
 
   return (
@@ -297,21 +311,21 @@ const Marketplace = () => {
                 ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
                 : 'grid-cols-1'
             }`}>
-              {nfts.map((nft) => (
+              {filteredNFTs.map((nft) => (
                 <NftCard
                   key={nft.id}
-                  id={nft.nft_id}
-                  title={nft.name}
+                  id={nft.id}
+                  title={nft.title}
                   image={nft.image_url}
-                  price={nft.price_sui ? `${nft.price_sui} ${nft.currency}` : 'Not for sale'}
-                  creator={nft.creator.display_name || nft.creator.sui_address.slice(0, 8) + '...'}
-                  flagged={nft.has_active_flags}
-                  threatLevel={nft.threat_level}
+                  price={`${nft.price} SUI`}
+                  creator={nft.wallet_address.slice(0, 8) + '...'}
+                  flagged={nft.is_fraud}
+                  threatLevel={nft.is_fraud ? 'danger' : (nft.confidence_score >= 0.8 ? 'safe' : 'warning')}
                 />
               ))}
             </div>
 
-            {nfts.length === 0 && !isLoading && (
+            {filteredNFTs.length === 0 && !isLoading && (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">No NFTs found matching your criteria.</p>
               </div>

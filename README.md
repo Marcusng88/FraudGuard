@@ -26,10 +26,10 @@ This is the decentralized foundation of the application.
 * **User Story:** As a buyer, I can purchase a listed NFT, which transfers ownership to my wallet.
 * **User Story:** As the AI Agent, I can call a specific function on the smart contract to attach a `FraudFlag` to a specific NFT object.
 
-### **2. AI Fraud Detection Agent (Backend: FastAPI, LangChain)**
-This is the "brain" that monitors and acts on suspicious activity.
+### **2. AI Fraud Detection Agent (Backend: FastAPI, LangChain + Google Gemini)**
+This is the "brain" that monitors and acts on suspicious activity using advanced AI.
 
-* **User Story (Visual AI):** As the agent, when a new NFT is minted, I will analyze its image, create a vector embedding, and compare it against a database of existing NFT images to detect potential plagiarism or duplicates.
+* **User Story (Visual AI with Gemini):** As the agent, when a new NFT is minted, I will use Google Gemini Pro Vision to analyze its image content, extract detailed descriptions, detect fraud indicators (plagiarism, AI-generation, low-effort content), and create vector embeddings using Google embeddings for similarity comparison.
 * **User Story (Behavioral AI):** As the agent, I will monitor on-chain events for simple red flags, such as a single wallet minting an unusually high number of NFTs in a short period.
 * **User Story (Enforcement):** As the agent, if I detect a high probability of fraud (either visual or behavioral), I will automatically sign and submit a transaction to the Sui network to flag the corresponding NFT object.
 
@@ -77,4 +77,39 @@ npm i
 # Step 4: Start the development server with auto-reloading and an instant preview.
 npm run dev
 ```
+
+## 🚀 New: Google Gemini-Powered Fraud Detection
+
+FraudGuard now uses **Google Gemini Pro Vision** for advanced AI-powered fraud detection:
+
+### Key Features:
+- **🔍 Advanced Image Analysis**: Gemini Pro Vision analyzes NFT images for fraud indicators
+- **📝 Smart Description Extraction**: Automatic detailed description generation for semantic analysis  
+- **🧠 AI Fraud Detection**: Detects plagiarism, AI-generation, template usage, and low-effort content
+- **🔗 Vector Similarity Search**: 768-dimensional Google embeddings for precise duplicate detection
+- **⚡ Intelligent Workflow**: LangGraph orchestrates multi-step fraud analysis pipeline
+
+### Quick Start with Gemini:
+```bash
+# 1. Set up environment
+cp backend/.env.example backend/.env
+# Add your GOOGLE_API_KEY to .env
+
+# 2. Install dependencies  
+cd backend
+pip install -r requirements.txt
+
+# 3. Test the fraud detection
+python test_fraud_detection.py
+
+# 4. Start the API server
+uvicorn main:app --reload
+```
+
+### Documentation:
+- **[Complete Workflow Guide](documentation/GEMINI_WORKFLOW_GUIDE.md)**: Detailed technical documentation
+- **[API Reference](backend/main.py)**: FastAPI endpoints and models
+- **[Configuration Guide](backend/.env.example)**: Environment setup
+
+Experience the future of NFT fraud prevention with AI! 🛡️✨
 

@@ -12,12 +12,9 @@ import { Upload, Image, Shield, Zap, AlertTriangle, CheckCircle, ExternalLink } 
 import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { toast } from '@/hooks/use-toast';
-import { 
-  uploadToPinata, 
-  createIPFSUrl, 
-  notifyBackendNewNFT,
-  PACKAGE_ID 
-} from '@/lib/sui-utils';
+import { PACKAGE_ID, uploadToPinata, createIPFSUrl, notifyBackendNewNFT } from '@/lib/sui-utils';
+import { createNFT, confirmNFTMint } from '@/lib/api';
+import { useNavigate } from 'react-router-dom';
 
 interface FormData {
   title: string;
@@ -46,11 +43,13 @@ export default function CreateNft() {
   } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [txDigest, setTxDigest] = useState<string | null>(null);
+  const [createdNftId, setCreatedNftId] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const account = useCurrentAccount();
   const client = useSuiClient();
   const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const navigate = useNavigate();
 
   // NFT Categories
   const categories = [
@@ -105,16 +104,26 @@ export default function CreateNft() {
     if (!account) {
       toast({
         title: "Wallet not connected",
-        description: "Please connect your wallet to mint NFT",
+        description: "Please connect your wallet to create NFT",
         variant: "destructive",
       });
       return;
     }
 
-    if (!formData.image || !formData.title.trim()) {
+    if (!formData.image || !formData.title.trim() || !formData.price.trim()) {
       toast({
         title: "Missing information",
-        description: "Please provide both image and title",
+        description: "Please provide image, title, and price",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const price = parseFloat(formData.price);
+    if (isNaN(price) || price <= 0) {
+      toast({
+        title: "Invalid price",
+        description: "Please enter a valid price greater than 0",
         variant: "destructive",
       });
       return;
@@ -124,27 +133,46 @@ export default function CreateNft() {
     setUploadProgress(0);
 
     try {
-      // Step 1: Upload image to Pinata
+      // Step 1: Upload image to Pinata IPFS
       toast({
         title: "Uploading image...",
-        description: "Uploading your NFT image to IPFS",
+        description: "Uploading your NFT image to IPFS via Pinata",
       });
       
       setUploadProgress(25);
-      const uploadResult = await uploadToPinata(formData.image);
-      const imageUrl = createIPFSUrl(uploadResult.IpfsHash);
+      const pinataResponse = await uploadToPinata(formData.image);
+      const imageUrl = createIPFSUrl(pinataResponse.IpfsHash);
       
       setUploadProgress(50);
 
-      // Step 2: Create and execute mint transaction
+      // Step 2: Create NFT record in database (includes AI fraud detection)
       toast({
         title: "Creating NFT...",
-        description: "Minting your NFT on the Sui blockchain",
+        description: "Storing NFT metadata and running fraud analysis",
+      });
+
+      const nftData = {
+        title: formData.title,
+        description: formData.description || '',
+        category: formData.category || 'Art',
+        price: price,
+        image_url: imageUrl,
+        wallet_address: account.address,
+      };
+
+      const createResult = await createNFT(nftData);
+      setCreatedNftId(createResult.nft_id);
+      
+      setUploadProgress(75);
+
+      // Step 3: Mint NFT on blockchain
+      toast({
+        title: "Minting NFT...",
+        description: "Creating your NFT on the Sui blockchain",
       });
 
       const tx = new Transaction();
       
-      // Package is now deployed, proceed with minting
       tx.moveCall({
         target: `${PACKAGE_ID}::fraudguard_nft::mint_nft`,
         arguments: [
@@ -155,7 +183,7 @@ export default function CreateNft() {
         ],
       });
 
-      setUploadProgress(75);
+      setUploadProgress(85);
 
       // Execute transaction
       signAndExecute(
@@ -163,49 +191,54 @@ export default function CreateNft() {
         {
           onSuccess: async (result) => {
             setTxDigest(result.digest);
-            setUploadProgress(90);
+            setUploadProgress(95);
 
             try {
-              // Step 3: Get transaction details for NFT ID
+              // Step 4: Get transaction details for NFT object ID
               const txResult = await client.getTransactionBlock({
                 digest: result.digest,
                 options: {
                   showEvents: true,
                   showEffects: true,
+                  showObjectChanges: true,
                 },
               });
 
-              // Extract NFT ID from events
-              let nftId = 'unknown';
-              if (txResult.events) {
-                const mintEvent = txResult.events.find(event => 
-                  event.type.includes('NFTMinted')
+              // Extract NFT object ID from transaction effects
+              let suiObjectId = '';
+              if (txResult.objectChanges) {
+                const createdObject = txResult.objectChanges.find(
+                  change => change.type === 'created' && 
+                  change.objectType?.includes('fraudguard_nft::NFT')
                 );
-
-                if (mintEvent && mintEvent.parsedJson) {
-                  const eventData = mintEvent.parsedJson as { nft_id?: string };
-                  nftId = eventData.nft_id || 'unknown';
+                if (createdObject && 'objectId' in createdObject) {
+                  suiObjectId = createdObject.objectId;
                 }
               }
 
-              // Notify backend for fraud detection
-              const nftData = {
-                nftId,
-                name: formData.title,
-                description: formData.description,
-                imageUrl,
-                creator: account.address,
-              };
-
-              await notifyBackendNewNFT(nftData);
+              // Step 5: Confirm mint in database
+              if (suiObjectId && createResult.nft_id) {
+                await confirmNFTMint(createResult.nft_id, suiObjectId);
+                
+                // Notify backend for additional fraud analysis
+                await notifyBackendNewNFT({
+                  nftId: createResult.nft_id,
+                  suiObjectId: suiObjectId,
+                  name: formData.title,
+                  description: formData.description || '',
+                  imageUrl: imageUrl,
+                  creator: account.address,
+                  transactionDigest: result.digest
+                });
+              }
 
               setUploadProgress(100);
 
               toast({
-                title: "NFT created successfully!",
+                title: "NFT created successfully! 🎉",
                 description: (
                   <div className="flex items-center gap-2">
-                    <span>Your NFT has been minted</span>
+                    <span>Your NFT has been minted and listed</span>
                     <a 
                       href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
                       target="_blank"
@@ -218,6 +251,11 @@ export default function CreateNft() {
                 ),
               });
 
+              // Navigate to marketplace after a short delay
+              setTimeout(() => {
+                navigate('/marketplace');
+              }, 2000);
+
               // Reset form
               setFormData({
                 title: '',
@@ -229,16 +267,20 @@ export default function CreateNft() {
               });
               setAnalysisResult(null);
 
-            } catch (backendError) {
-              console.warn('Backend notification failed:', backendError);
-              // NFT was still minted successfully
+            } catch (confirmError) {
+              console.warn('Confirmation failed:', confirmError);
+              toast({
+                title: "NFT minted successfully",
+                description: "NFT was created on blockchain, but confirmation failed. Check the marketplace.",
+                variant: "default",
+              });
             }
           },
           onError: (error) => {
             console.error('Transaction failed:', error);
             toast({
               title: "Minting failed",
-              description: error.message || "Failed to mint NFT. Please try again.",
+              description: error.message || "Failed to mint NFT on blockchain. Please try again.",
               variant: "destructive",
             });
           }
@@ -248,8 +290,8 @@ export default function CreateNft() {
     } catch (error) {
       console.error('Error creating NFT:', error);
       toast({
-        title: "Error",
-        description: error instanceof Error ? error.message : "Failed to create NFT",
+        title: "Creation failed",
+        description: error instanceof Error ? error.message : "Failed to create NFT. Please try again.",
         variant: "destructive",
       });
     } finally {

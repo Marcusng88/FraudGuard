@@ -27,16 +27,22 @@ try:
     from core.config import settings, validate_sui_config, validate_ai_config
     from agent.listener import start_fraud_detection_service, stop_fraud_detection_service
     from agent.sui_client import sui_client
-    from agent.fraud_detector import analyze_nft_for_fraud, NFTData
+    from agent.supabase_client import supabase_client
+    from agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
     from api.marketplace import router as marketplace_router
+    from api.nft import router as nft_router
+    from api.pinata import router as pinata_router
     from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
     from backend.core.config import settings, validate_sui_config, validate_ai_config
     from backend.agent.listener import start_fraud_detection_service, stop_fraud_detection_service
     from backend.agent.sui_client import sui_client
-    from backend.agent.fraud_detector import analyze_nft_for_fraud, NFTData
+    from backend.agent.supabase_client import supabase_client
+    from backend.agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
     from backend.api.marketplace import router as marketplace_router
+    from backend.api.nft import router as nft_router
+    from backend.api.pinata import router as pinata_router
     from backend.database.connection import create_tables
 
 # Configure logging
@@ -100,6 +106,21 @@ async def lifespan(app):
     # Create database tables
     create_tables()
 
+    # Initialize Supabase client
+    logger.info("Initializing Supabase client...")
+    await supabase_client.initialize()
+    
+    # Initialize Unified Fraud Detection System
+    logger.info("Initializing unified fraud detection system...")
+    try:
+        if await initialize_fraud_detector():
+            logger.info("Unified fraud detection system initialized successfully")
+        else:
+            logger.warning("Fraud detection system initialization failed - using fallback analysis")
+    except Exception as e:
+        logger.error(f"Error initializing fraud detection system: {e}")
+        logger.warning("Will use fallback fraud detection")
+
     # Validate configuration
     if not validate_sui_config():
         logger.warning("Sui configuration incomplete - some features may not work")
@@ -137,8 +158,10 @@ if FastAPI:
         allow_headers=["*"],
     )
     
-    # Include marketplace routes
+    # Include routes
     app.include_router(marketplace_router)
+    app.include_router(nft_router)
+    app.include_router(pinata_router, prefix="/api")
     
 else:
     app = None
@@ -176,7 +199,7 @@ if app:
 
     @app.post("/analyze-nft", response_model=NFTAnalysisResponse)
     async def analyze_nft(request: NFTAnalysisRequest):
-        """Analyze an NFT for fraud indicators"""
+        """Analyze an NFT for fraud indicators using AI"""
         try:
             logger.info(f"Analyzing NFT: {request.nft_id}")
 
@@ -185,17 +208,26 @@ if app:
             if not nft_data:
                 raise HTTPException(status_code=404, detail="NFT not found")
 
-            # Perform fraud analysis
-            fraud_result = await analyze_nft_for_fraud(nft_data)
+            # Convert to NFTData format for analysis
+            nft_analysis_data = NFTData(
+                title=nft_data.get("name", "Unknown"),
+                description=nft_data.get("description", ""),
+                image_url=nft_data.get("image_url", ""),
+                category=nft_data.get("category", "art"),
+                price=float(nft_data.get("price", 0))
+            )
+
+            # Perform AI-powered fraud analysis
+            fraud_result = await analyze_nft_for_fraud(nft_analysis_data)
 
             return NFTAnalysisResponse(
                 nft_id=request.nft_id,
-                is_fraud=fraud_result.is_fraud,
-                confidence_score=fraud_result.confidence_score,
-                flag_type=fraud_result.flag_type,
-                reason=fraud_result.reason,
+                is_fraud=fraud_result.get("is_fraud", False),
+                confidence_score=fraud_result.get("confidence_score", 0.0),
+                flag_type=fraud_result.get("flag_type", 0),
+                reason=fraud_result.get("reason", "Analysis completed"),
                 analysis_timestamp=str(asyncio.get_event_loop().time()),
-                details=fraud_result.details
+                details=fraud_result.get("analysis_details", {})
             )
 
         except HTTPException:

@@ -155,18 +155,28 @@ export async function getNFTEvents(client: SuiClient, digest: string) {
  */
 export async function notifyBackendNewNFT(nftData: {
   nftId: string;
+  suiObjectId: string;
   name: string;
   description: string;
   imageUrl: string;
   creator: string;
+  transactionDigest: string;
 }) {
   try {
-    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/marketplace/nft/analyze`, {
+    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/nft/notify-minted`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(nftData),
+      body: JSON.stringify({
+        nft_id: nftData.nftId,
+        sui_object_id: nftData.suiObjectId,
+        name: nftData.name,
+        description: nftData.description,
+        image_url: nftData.imageUrl,
+        creator: nftData.creator,
+        transaction_digest: nftData.transactionDigest
+      }),
     });
 
     if (!response.ok) {

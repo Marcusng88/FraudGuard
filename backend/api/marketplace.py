@@ -3,19 +3,91 @@ Marketplace API endpoints for FraudGuard
 Handles NFT marketplace operations including listing, filtering, and details
 """
 import math
+import uuid
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, desc, func
 from pydantic import BaseModel
+from enum import Enum
 
-from database.connection import get_db
-from models.database import (
-    NFT, User, FraudFlag, Trade,
-    NFTResponse, NFTDetailResponse, MarketplaceFilters, 
-    MarketplaceResponse, MarketplaceStats, ThreatLevel
-)
+# Import database connection and models
+try:
+    from database.connection import get_db
+    from models.database import User, NFT, Listing, FraudFlag
+except ImportError:
+    try:
+        from backend.database.connection import get_db
+        from backend.models.database import User, NFT, Listing, FraudFlag
+    except ImportError:
+        # Fallback for development
+        def get_db():
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import sessionmaker
+            import os
+            
+            DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost/fraudguard")
+            engine = create_engine(DATABASE_URL)
+            SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+            db = SessionLocal()
+            try:
+                yield db
+            finally:
+                db.close()
+        
+        # Fallback model imports
+        from models.database import User, NFT, Listing, FraudFlag
+
+# Response Models
+class ThreatLevel(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    CRITICAL = "critical"
+
+class NFTResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    category: str
+    price: float
+    image_url: str
+    wallet_address: str
+    sui_object_id: Optional[str]
+    is_fraud: bool
+    confidence_score: float
+    status: str
+    created_at: datetime
+
+class NFTDetailResponse(BaseModel):
+    id: str
+    title: str
+    description: Optional[str]
+    category: str
+    price: float
+    image_url: str
+    wallet_address: str
+    sui_object_id: Optional[str]
+    is_fraud: bool
+    confidence_score: float
+    flag_type: Optional[int]
+    reason: Optional[str]
+    status: str
+    created_at: datetime
+
+class MarketplaceResponse(BaseModel):
+    nfts: List[NFTResponse]
+    total: int
+    page: int
+    limit: int
+    total_pages: int
+
+class MarketplaceStats(BaseModel):
+    total_nfts: int
+    total_volume: float
+    average_price: float
+    fraud_detection_rate: float
 
 # Import fraud detection functionality
 try:
@@ -34,11 +106,13 @@ except ImportError:
 # Request models
 class NFTCreationRequest(BaseModel):
     """Request model for new NFT creation notification"""
-    nftId: str
-    name: str
+    title: str
     description: str
-    imageUrl: str
-    creator: str
+    category: str
+    price: float
+    image_url: str
+    wallet_address: str
+    sui_object_id: Optional[str] = None
 
 router = APIRouter(prefix="/api/marketplace", tags=["marketplace"])
 
@@ -57,16 +131,9 @@ async def get_marketplace_nfts(
     Get marketplace NFT listings with filtering and pagination
     """
     try:
-        # Base query for active listings
-        query = db.query(NFT).options(
-            joinedload(NFT.creator),
-            joinedload(NFT.owner),
-            joinedload(NFT.fraud_flags)
-        ).filter(
-            and_(
-                NFT.listing_status == "active",
-                NFT.is_listed == True
-            )
+        # Base query for NFTs with status 'minted' or 'active'
+        query = db.query(NFT).filter(
+            NFT.status.in_(["minted", "active"])
         )
         
         # Apply filters
@@ -74,76 +141,41 @@ async def get_marketplace_nfts(
             search_term = f"%{search}%"
             query = query.filter(
                 or_(
-                    NFT.name.ilike(search_term),
+                    NFT.title.ilike(search_term),
                     NFT.description.ilike(search_term)
                 )
             )
         
-        if threat_level:
-            query = query.filter(NFT.threat_level == threat_level.value)
-        
         if min_price is not None:
-            query = query.filter(NFT.price_sui >= min_price)
+            query = query.filter(NFT.price >= min_price)
         
         if max_price is not None:
-            query = query.filter(NFT.price_sui <= max_price)
-        
-        if creator_verified is not None:
-            query = query.join(NFT.creator).filter(User.is_verified == creator_verified)
+            query = query.filter(NFT.price <= max_price)
         
         # Get total count for pagination
         total = query.count()
         
         # Apply pagination and ordering
-        query = query.order_by(desc(NFT.listed_at)).offset((page - 1) * limit).limit(limit)
+        query = query.order_by(desc(NFT.created_at)).offset((page - 1) * limit).limit(limit)
         
         nfts = query.all()
         
         # Convert to response format
         nft_responses = []
         for nft in nfts:
-            # Check for active fraud flags
-            has_active_flags = any(flag.is_active for flag in nft.fraud_flags)
-            
             nft_response = NFTResponse(
                 id=str(nft.id),
-                nft_id=nft.nft_id,
-                name=nft.name,
+                title=nft.title,
                 description=nft.description,
+                category=nft.category,
+                price=float(nft.price),
                 image_url=nft.image_url,
-                price_sui=float(nft.price_sui) if nft.price_sui else None,
-                currency=nft.currency,
-                threat_level=ThreatLevel(nft.threat_level),
-                confidence_score=float(nft.confidence_score) if nft.confidence_score else None,
-                created_at=nft.created_at,
-                listed_at=nft.listed_at,
-                creator={
-                    "sui_address": nft.creator.sui_address,
-                    "display_name": nft.creator.display_name,
-                    "avatar_url": nft.creator.avatar_url,
-                    "is_verified": nft.creator.is_verified,
-                    "reputation_score": nft.creator.reputation_score
-                },
-                owner={
-                    "sui_address": nft.owner.sui_address,
-                    "display_name": nft.owner.display_name,
-                    "avatar_url": nft.owner.avatar_url,
-                    "is_verified": nft.owner.is_verified,
-                    "reputation_score": nft.owner.reputation_score
-                },
-                fraud_flags=[
-                    {
-                        "flag_id": flag.flag_id,
-                        "reason": flag.reason,
-                        "flag_type": flag.flag_type,
-                        "confidence": float(flag.confidence),
-                        "flagged_by_address": flag.flagged_by_address,
-                        "is_active": flag.is_active,
-                        "created_at": flag.created_at
-                    }
-                    for flag in nft.fraud_flags if flag.is_active
-                ],
-                has_active_flags=has_active_flags
+                wallet_address=nft.wallet_address,
+                sui_object_id=nft.sui_object_id,
+                is_fraud=nft.is_fraud,
+                confidence_score=nft.confidence_score,
+                status=nft.status,
+                created_at=nft.created_at
             )
             nft_responses.append(nft_response)
         
@@ -169,78 +201,27 @@ async def get_nft_details(
     Get detailed information about a specific NFT
     """
     try:
-        # Query NFT with all related data
-        nft = db.query(NFT).options(
-            joinedload(NFT.creator),
-            joinedload(NFT.owner),
-            joinedload(NFT.fraud_flags),
-            joinedload(NFT.trades).joinedload(Trade.buyer),
-            joinedload(NFT.trades).joinedload(Trade.seller)
-        ).filter(NFT.nft_id == nft_id).first()
+        # Query NFT by ID
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
         
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
-        # Check for active fraud flags
-        has_active_flags = any(flag.is_active for flag in nft.fraud_flags)
-        
-        # Prepare trade history
-        trades = []
-        for trade in nft.trades:
-            if trade.transaction_status == "confirmed":
-                trades.append({
-                    "transaction_id": trade.transaction_id,
-                    "seller_address": trade.seller_address,
-                    "buyer_address": trade.buyer_address,
-                    "price_sui": float(trade.price_sui),
-                    "currency": trade.currency,
-                    "trade_type": trade.trade_type,
-                    "confirmed_at": trade.confirmed_at
-                })
-        
         return NFTDetailResponse(
             id=str(nft.id),
-            nft_id=nft.nft_id,
-            name=nft.name,
+            title=nft.title,
             description=nft.description,
+            category=nft.category,
+            price=float(nft.price),
             image_url=nft.image_url,
-            metadata_url=nft.metadata_url,
-            price_sui=float(nft.price_sui) if nft.price_sui else None,
-            currency=nft.currency,
-            is_listed=nft.is_listed,
-            listing_status=nft.listing_status,
-            threat_level=ThreatLevel(nft.threat_level),
-            confidence_score=float(nft.confidence_score) if nft.confidence_score else None,
-            created_at=nft.created_at,
-            listed_at=nft.listed_at,
-            creator={
-                "sui_address": nft.creator.sui_address,
-                "display_name": nft.creator.display_name,
-                "avatar_url": nft.creator.avatar_url,
-                "is_verified": nft.creator.is_verified,
-                "reputation_score": nft.creator.reputation_score
-            },
-            owner={
-                "sui_address": nft.owner.sui_address,
-                "display_name": nft.owner.display_name,
-                "avatar_url": nft.owner.avatar_url,
-                "is_verified": nft.owner.is_verified,
-                "reputation_score": nft.owner.reputation_score
-            },
-            fraud_flags=[
-                {
-                    "flag_id": flag.flag_id,
-                    "reason": flag.reason,
-                    "flag_type": flag.flag_type,
-                    "confidence": float(flag.confidence),
-                    "flagged_by_address": flag.flagged_by_address,
-                    "is_active": flag.is_active,
-                    "created_at": flag.created_at
-                }
-                for flag in nft.fraud_flags if flag.is_active
-            ],
-            has_active_flags=has_active_flags,
-            trades=trades
+            wallet_address=nft.wallet_address,
+            sui_object_id=nft.sui_object_id,
+            is_fraud=nft.is_fraud,
+            confidence_score=nft.confidence_score,
+            flag_type=nft.flag_type,
+            reason=nft.reason,
+            status=nft.status,
+            created_at=nft.created_at
         )
         
     except HTTPException:
@@ -256,27 +237,24 @@ async def get_marketplace_stats(db: Session = Depends(get_db)):
     try:
         # Calculate stats from database
         total_nfts = db.query(func.count(NFT.id)).scalar()
-        active_listings = db.query(func.count(NFT.id)).filter(
-            and_(NFT.listing_status == "active", NFT.is_listed == True)
-        ).scalar()
-        verified_nfts = db.query(func.count(NFT.id)).filter(NFT.threat_level == "safe").scalar()
         
-        # Count NFTs with active fraud flags
-        flagged_nfts = db.query(func.count(NFT.id.distinct())).join(FraudFlag).filter(
-            FraudFlag.is_active == True
-        ).scalar()
+        # Count safe NFTs (not flagged as fraud)
+        safe_nfts = db.query(func.count(NFT.id)).filter(NFT.is_fraud == False).scalar()
         
-        # Calculate total volume from confirmed trades
-        total_volume = db.query(func.sum(Trade.price_sui)).filter(
-            Trade.transaction_status == "confirmed"
-        ).scalar() or 0
+        # Count flagged NFTs
+        flagged_nfts = db.query(func.count(NFT.id)).filter(NFT.is_fraud == True).scalar()
+        
+        # Calculate average price
+        avg_price = db.query(func.avg(NFT.price)).scalar() or 0
+        
+        # Calculate fraud detection rate
+        fraud_detection_rate = (flagged_nfts / total_nfts * 100) if total_nfts > 0 else 0
         
         return MarketplaceStats(
             total_nfts=total_nfts,
-            active_listings=active_listings,
-            verified_nfts=verified_nfts,
-            flagged_nfts=flagged_nfts,
-            total_volume_sui=float(total_volume)
+            total_volume=0.0,  # No trade history in current schema
+            average_price=float(avg_price),
+            fraud_detection_rate=fraud_detection_rate
         )
         
     except Exception as e:
@@ -291,23 +269,16 @@ async def get_featured_nfts(
     Get featured NFTs (high-quality, verified NFTs)
     """
     try:
-        # Get verified NFTs with high confidence scores
-        nfts = db.query(NFT).options(
-            joinedload(NFT.creator),
-            joinedload(NFT.owner),
-            joinedload(NFT.fraud_flags)
-        ).filter(
+        # Get NFTs that are not fraud with high confidence scores
+        nfts = db.query(NFT).filter(
             and_(
-                NFT.listing_status == "active",
-                NFT.is_listed == True,
-                NFT.threat_level == "safe",
+                NFT.status.in_(["minted", "active"]),
+                NFT.is_fraud == False,
                 NFT.confidence_score >= 0.8
             )
-        ).join(NFT.creator).filter(
-            User.is_verified == True
         ).order_by(
             desc(NFT.confidence_score),
-            desc(NFT.listed_at)
+            desc(NFT.created_at)
         ).limit(limit).all()
         
         # Convert to response format
@@ -315,32 +286,17 @@ async def get_featured_nfts(
         for nft in nfts:
             nft_response = NFTResponse(
                 id=str(nft.id),
-                nft_id=nft.nft_id,
-                name=nft.name,
+                title=nft.title,
                 description=nft.description,
+                category=nft.category,
+                price=float(nft.price),
                 image_url=nft.image_url,
-                price_sui=float(nft.price_sui) if nft.price_sui else None,
-                currency=nft.currency,
-                threat_level=ThreatLevel(nft.threat_level),
-                confidence_score=float(nft.confidence_score) if nft.confidence_score else None,
-                created_at=nft.created_at,
-                listed_at=nft.listed_at,
-                creator={
-                    "sui_address": nft.creator.sui_address,
-                    "display_name": nft.creator.display_name,
-                    "avatar_url": nft.creator.avatar_url,
-                    "is_verified": nft.creator.is_verified,
-                    "reputation_score": nft.creator.reputation_score
-                },
-                owner={
-                    "sui_address": nft.owner.sui_address,
-                    "display_name": nft.owner.display_name,
-                    "avatar_url": nft.owner.avatar_url,
-                    "is_verified": nft.owner.is_verified,
-                    "reputation_score": nft.owner.reputation_score
-                },
-                fraud_flags=[],
-                has_active_flags=False
+                wallet_address=nft.wallet_address,
+                sui_object_id=nft.sui_object_id,
+                is_fraud=nft.is_fraud,
+                confidence_score=nft.confidence_score,
+                status=nft.status,
+                created_at=nft.created_at
             )
             featured_nfts.append(nft_response)
         
@@ -350,53 +306,42 @@ async def get_featured_nfts(
         raise HTTPException(status_code=500, detail=f"Error fetching featured NFTs: {str(e)}")
 
 
-@router.post("/nft/analyze")
-async def analyze_new_nft(
+@router.post("/nft/create")
+async def create_nft(
     request: NFTCreationRequest,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
-    Analyze a newly created NFT for fraud indicators
-    This endpoint is called by the frontend after NFT minting
+    Create a new NFT record and analyze for fraud
+    This endpoint is called by the frontend after NFT data preparation
     """
     try:
-        # Store NFT in database first
         # Check if user exists, create if not
-        creator = db.query(User).filter(User.sui_address == request.creator).first()
-        if not creator:
-            creator = User(
-                sui_address=request.creator,
-                display_name=f"User {request.creator[:8]}...",
-                reputation_score=50,  # Default reputation
-                is_verified=False
+        user = db.query(User).filter(User.wallet_address == request.wallet_address).first()
+        if not user:
+            # Create a default user profile
+            user = User(
+                wallet_address=request.wallet_address,
+                email=f"{request.wallet_address[:8]}@temp.com",  # Temporary email
+                username=f"User{request.wallet_address[:8]}",
+                reputation_score=50.0
             )
-            db.add(creator)
+            db.add(user)
             db.commit()
-            db.refresh(creator)
+            db.refresh(user)
 
-        # Check if NFT already exists
-        existing_nft = db.query(NFT).filter(NFT.nft_id == request.nftId).first()
-        if existing_nft:
-            return {
-                "success": True,
-                "message": "NFT already exists in database",
-                "nft_id": request.nftId,
-                "analysis_status": "skipped"
-            }
-
-        # Create NFT record
+        # Create NFT record in database
         nft = NFT(
-            nft_id=request.nftId,
-            name=request.name,
+            owner_id=user.id,
+            wallet_address=request.wallet_address,
+            title=request.title,
             description=request.description,
-            image_url=request.imageUrl,
-            creator_address=request.creator,
-            current_owner_address=request.creator,  # Initially owned by creator
-            threat_level="safe",  # Default to safe, will be updated after analysis
-            confidence_score=0.0,
-            is_listed=False,  # Not listed initially
-            listing_status="unlisted"
+            category=request.category,
+            price=request.price,
+            image_url=request.image_url,
+            sui_object_id=request.sui_object_id,
+            status="pending"  # Will be updated to "minted" after blockchain confirmation
         )
         
         db.add(nft)
@@ -404,38 +349,201 @@ async def analyze_new_nft(
         db.refresh(nft)
 
         # Run fraud analysis in background
-        if analyze_nft_for_fraud and NFTData:
-            background_tasks.add_task(
-                run_fraud_analysis,
-                nft_id=request.nftId,
-                nft_data=NFTData(
-                    object_id=request.nftId,
-                    name=request.name,
-                    description=request.description,
-                    image_url=request.imageUrl,
-                    creator=request.creator,
-                    created_at=int(datetime.now().timestamp()),
-                    metadata="{}",
-                    collection=""
-                )
-            )
+        background_tasks.add_task(
+            run_fraud_analysis,
+            nft_id=str(nft.id),
+            image_url=request.image_url,
+            title=request.title,
+            description=request.description
+        )
 
         return {
             "success": True,
-            "message": "NFT received and queued for analysis",
-            "nft_id": request.nftId,
+            "message": "NFT created and queued for analysis",
+            "nft_id": str(nft.id),
             "analysis_status": "queued"
         }
 
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error processing NFT: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error creating NFT: {str(e)}")
 
 
-async def run_fraud_analysis(nft_id: str, nft_data):
+@router.put("/nft/{nft_id}/confirm-mint")
+async def confirm_nft_mint(
+    nft_id: str,
+    sui_object_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Confirm NFT has been minted on blockchain and update status
+    """
+    try:
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not nft:
+            raise HTTPException(status_code=404, detail="NFT not found")
+        
+        nft.sui_object_id = sui_object_id
+        nft.status = "minted"
+        db.commit()
+
+        return {
+            "success": True,
+            "message": "NFT mint confirmed",
+            "nft_id": nft_id,
+            "sui_object_id": sui_object_id
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error confirming mint: {str(e)}")
+
+
+@router.get("/nfts/recent", response_model=List[NFTResponse])
+async def get_recent_nfts(
+    limit: int = Query(10, ge=1, le=50, description="Number of recent NFTs to return"),
+    db: Session = Depends(get_db)
+):
+    """
+    Get recently created NFTs for marketplace display
+    This endpoint shows NFTs that have been newly minted and are available for trading
+    """
+    try:
+        # Query for recently created NFTs, ordered by creation date
+        recent_nfts = db.query(NFT).filter(
+            NFT.status.in_(["minted", "active", "listed"])
+        ).order_by(desc(NFT.created_at)).limit(limit).all()
+        
+        # Convert to response format
+        nft_responses = []
+        for nft in recent_nfts:
+            # Get latest fraud analysis if available
+            latest_fraud_flag = db.query(FraudFlag).filter(
+                FraudFlag.nft_id == nft.id
+            ).order_by(desc(FraudFlag.flagged_at)).first()
+            
+            is_fraud = latest_fraud_flag.confidence_score > 60 if latest_fraud_flag else False
+            confidence_score = latest_fraud_flag.confidence_score / 100.0 if latest_fraud_flag else 0.0
+            
+            nft_responses.append(NFTResponse(
+                id=nft.id,
+                title=nft.title,
+                description=nft.description,
+                category=nft.category,
+                price=nft.price,
+                image_url=nft.image_url,
+                wallet_address=nft.wallet_address,
+                sui_object_id=nft.sui_object_id,
+                is_fraud=is_fraud,
+                confidence_score=confidence_score,
+                status=nft.status,
+                created_at=nft.created_at
+            ))
+        
+        return nft_responses
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching recent NFTs: {str(e)}")
+
+
+@router.post("/nfts/{nft_id}/analyze")
+async def trigger_nft_analysis(
+    nft_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Trigger fraud analysis for a specific NFT
+    This endpoint allows manual triggering of fraud analysis for newly created NFTs
+    """
+    try:
+        # Get NFT from database
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not nft:
+            raise HTTPException(status_code=404, detail="NFT not found")
+        
+        # Add background task for fraud analysis
+        background_tasks.add_task(
+            run_fraud_analysis_and_update_db,
+            nft_id=nft.id,
+            image_url=nft.image_url,
+            title=nft.title,
+            description=nft.description or "",
+            db_session=db
+        )
+        
+        return {
+            "message": "Fraud analysis started",
+            "nft_id": nft_id,
+            "status": "processing"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error starting analysis: {str(e)}")
+
+
+async def run_fraud_analysis_and_update_db(
+    nft_id: str, 
+    image_url: str, 
+    title: str, 
+    description: str,
+    db_session: Session
+):
+    """
+    Enhanced background task to run fraud analysis and update database
+    """
+    try:
+        if analyze_nft_for_fraud and NFTData:
+            # Create NFTData object for analysis
+            nft_data = NFTData(
+                title=title,
+                description=description,
+                image_url=image_url,
+                category="art",  # Default category
+                price=0.0  # Price not needed for analysis
+            )
+            
+            # Run fraud analysis
+            result = await analyze_nft_for_fraud(nft_data)
+            
+            # Store fraud analysis results in database
+            if result.get("is_fraud", False) or result.get("confidence_score", 0.0) > 0.3:
+                fraud_flag = FraudFlag(
+                    id=str(uuid.uuid4()),
+                    nft_id=nft_id,
+                    flag_type=result.get("flag_type", 1),
+                    confidence_score=int(result.get("confidence_score", 0.0) * 100),
+                    reason=result.get("reason", "Automated fraud detection"),
+                    flagged_by="fraud_detection_agent",
+                    flagged_at=int(datetime.now().timestamp()),
+                    is_active=True
+                )
+                
+                db_session.add(fraud_flag)
+                db_session.commit()
+                
+                print(f"Fraud flag created for NFT {nft_id}: confidence={result.get('confidence_score', 0.0):.2f}")
+            else:
+                print(f"NFT {nft_id} passed fraud analysis: confidence={result.get('confidence_score', 0.0):.2f}")
+            
+    except Exception as e:
+        print(f"Error in fraud analysis for {nft_id}: {e}")
+        db_session.rollback()
+
+
+async def run_fraud_analysis(nft_id: str, image_url: str, title: str, description: str):
     """Background task to run fraud analysis"""
     try:
-        if analyze_nft_for_fraud:
+        if analyze_nft_for_fraud and NFTData:
+            nft_data = NFTData(
+                title=title,
+                description=description,
+                image_url=image_url,
+                category="art",
+                price=0.0
+            )
             result = await analyze_nft_for_fraud(nft_data)
             
             # Update NFT with analysis results
