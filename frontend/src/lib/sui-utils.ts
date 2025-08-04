@@ -88,7 +88,7 @@ export function createIPFSUrl(hash: string): string {
 }
 
 // Package ID from successful deployment
-export const PACKAGE_ID = '0xa97d9b127b18afe9cc4c42f3fdab5c5044fa2c2aa2d2883049e009e0ea1cacf1';
+export const PACKAGE_ID = '0x98079b6bc9b00a531e5e0cbc14c086cfa87c6fa240d4ee8aa7b82ca9444149b8';
 
 /**
  * Mint NFT transaction
@@ -96,7 +96,8 @@ export const PACKAGE_ID = '0xa97d9b127b18afe9cc4c42f3fdab5c5044fa2c2aa2d2883049e
 export function createMintNFTTransaction(
   name: string,
   description: string,
-  imageUrl: string
+  imageUrl: string,
+  recipient: string
 ): Transaction {
   const tx = new Transaction();
   
@@ -106,7 +107,7 @@ export function createMintNFTTransaction(
       tx.pure.vector('u8', Array.from(new TextEncoder().encode(name))),
       tx.pure.vector('u8', Array.from(new TextEncoder().encode(description))),
       tx.pure.vector('u8', Array.from(new TextEncoder().encode(imageUrl))),
-      tx.pure.address('0x0'), // Will be replaced with actual recipient
+      tx.pure.address(recipient),
     ],
   });
   

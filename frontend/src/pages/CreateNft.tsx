@@ -41,6 +41,12 @@ export default function CreateNft() {
     confidence: number;
     warnings: string[];
   } | null>(null);
+  const [fraudDetectionResult, setFraudDetectionResult] = useState<{
+    isFraud: boolean;
+    confidence: number;
+    reason?: string;
+    flagType?: number;
+  } | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [txDigest, setTxDigest] = useState<string | null>(null);
   const [createdNftId, setCreatedNftId] = useState<string | null>(null);
@@ -163,6 +169,25 @@ export default function CreateNft() {
       const createResult = await createNFT(nftData);
       setCreatedNftId(createResult.nft_id);
       
+      // Show fraud warning but allow proceeding
+      if (createResult.fraud_analysis && createResult.fraud_analysis.is_fraud) {
+        toast({
+          title: "⚠️ Fraud Detected",
+          description: (
+            <div className="space-y-2">
+              <p>Your NFT has been flagged as potentially fraudulent, but you can still proceed.</p>
+              <p className="text-sm text-muted-foreground">
+                Reason: {createResult.fraud_analysis.reason || "Suspicious content detected"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Confidence: {Math.round((createResult.fraud_analysis.confidence_score || 0) * 100)}%
+              </p>
+            </div>
+          ),
+          variant: "default",
+        });
+      }
+      
       setUploadProgress(75);
 
       // Step 3: Mint NFT on blockchain
@@ -174,7 +199,7 @@ export default function CreateNft() {
       const tx = new Transaction();
       
       tx.moveCall({
-        target: `${PACKAGE_ID}::fraudguard_nft::mint_nft`,
+        target: `${PACKAGE_ID}::fraudguard_nft::mint_nft_with_id`,
         arguments: [
           tx.pure.vector('u8', Array.from(new TextEncoder().encode(formData.title))),
           tx.pure.vector('u8', Array.from(new TextEncoder().encode(formData.description))),
@@ -194,42 +219,169 @@ export default function CreateNft() {
             setUploadProgress(95);
 
             try {
-              // Step 4: Get transaction details for NFT object ID
-              const txResult = await client.getTransactionBlock({
-                digest: result.digest,
-                options: {
-                  showEvents: true,
-                  showEffects: true,
-                  showObjectChanges: true,
-                },
-              });
+              // Step 4: Get transaction details for NFT object ID with retry mechanism
+              const getTransactionWithRetry = async (digest: string, maxRetries = 5, baseDelay = 1000) => {
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                  try {
+                    console.log(`Attempt ${attempt + 1} to fetch transaction ${digest}`);
+                    const txResult = await client.getTransactionBlock({
+                      digest: digest,
+                      options: {
+                        showEvents: true,
+                        showEffects: true,
+                        showObjectChanges: true,
+                      },
+                    });
+                    console.log(`Successfully fetched transaction on attempt ${attempt + 1}`);
+                    return txResult;
+                  } catch (error: any) {
+                    console.log(`Attempt ${attempt + 1} failed:`, error.message);
+                    
+                    // If this is the last attempt, throw the error
+                    if (attempt === maxRetries - 1) {
+                      throw error;
+                    }
+                    
+                    // Calculate delay with exponential backoff (1s, 2s, 4s, 8s, 16s)
+                    const delay = baseDelay * Math.pow(2, attempt);
+                    console.log(`Waiting ${delay}ms before retry...`);
+                    
+                    // Show progress to user
+                    toast({
+                      title: "Processing transaction...",
+                      description: `Waiting for blockchain confirmation (attempt ${attempt + 1}/${maxRetries})`,
+                      variant: "default",
+                    });
+                    
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                  }
+                }
+              };
+
+              const txResult = await getTransactionWithRetry(result.digest);
 
               // Extract NFT object ID from transaction effects
               let suiObjectId = '';
+              console.log('Transaction result:', txResult);
+              
+              // Method 1: Look for created objects in objectChanges
               if (txResult.objectChanges) {
-                const createdObject = txResult.objectChanges.find(
-                  change => change.type === 'created' && 
-                  change.objectType?.includes('fraudguard_nft::NFT')
+                console.log('Object changes:', txResult.objectChanges);
+                const createdObjects = txResult.objectChanges.filter(
+                  change => change.type === 'created'
                 );
-                if (createdObject && 'objectId' in createdObject) {
-                  suiObjectId = createdObject.objectId;
+                console.log('Created objects:', createdObjects);
+                
+                // Look for FraudGuardNFT objects specifically
+                const nftObject = createdObjects.find(
+                  change => 'objectType' in change && 
+                  change.objectType && 
+                  (change.objectType.includes('fraudguard_nft::FraudGuardNFT') || 
+                   change.objectType.includes('fraudguard::fraudguard_nft::FraudGuardNFT'))
+                );
+                
+                if (nftObject && 'objectId' in nftObject) {
+                  suiObjectId = nftObject.objectId;
+                  console.log('Found NFT object ID from FraudGuardNFT:', suiObjectId);
+                } else if (createdObjects.length > 0) {
+                  // If no specific NFT object found, use the first created object
+                  const firstCreated = createdObjects[0];
+                  if ('objectId' in firstCreated) {
+                    suiObjectId = firstCreated.objectId;
+                    console.log('Using first created object as NFT ID:', suiObjectId);
+                  }
                 }
               }
+              
+              // Method 2: Try to extract from events
+              if (!suiObjectId && txResult.events) {
+                console.log('Events:', txResult.events);
+                const nftMintedEvent = txResult.events.find(
+                  event => event.type?.includes('NFTMinted') || 
+                          event.type?.includes('fraudguard_nft') ||
+                          event.type?.includes('fraudguard::fraudguard_nft::NFTMinted')
+                );
+                if (nftMintedEvent && nftMintedEvent.parsedJson) {
+                  const parsedEvent = nftMintedEvent.parsedJson as any;
+                  console.log('Parsed event:', parsedEvent);
+                  if (parsedEvent.nft_id) {
+                    suiObjectId = parsedEvent.nft_id;
+                    console.log('Found NFT object ID from events:', suiObjectId);
+                  }
+                }
+              }
+              
+              // Method 3: Try to get from transaction effects
+              if (!suiObjectId && txResult.effects) {
+                console.log('Transaction effects:', txResult.effects);
+                if (txResult.effects.created && txResult.effects.created.length > 0) {
+                  const firstCreated = txResult.effects.created[0];
+                  suiObjectId = firstCreated.reference.objectId;
+                  console.log('Using first created object from effects as NFT ID:', suiObjectId);
+                }
+              }
+              
+              // Method 4: Look for any object with fraudguard in the type
+              if (!suiObjectId && txResult.objectChanges) {
+                const fraudguardObject = txResult.objectChanges.find(
+                  change => change.type === 'created' && 
+                  'objectType' in change && 
+                  change.objectType && 
+                  change.objectType.includes('fraudguard')
+                );
+                if (fraudguardObject && 'objectId' in fraudguardObject) {
+                  suiObjectId = fraudguardObject.objectId;
+                  console.log('Found fraudguard object ID:', suiObjectId);
+                }
+              }
+              
+              // Method 5: Last resort - use any created object
+              if (!suiObjectId && txResult.objectChanges) {
+                const anyCreatedObject = txResult.objectChanges.find(
+                  change => change.type === 'created' && 'objectId' in change
+                );
+                if (anyCreatedObject && 'objectId' in anyCreatedObject) {
+                  suiObjectId = anyCreatedObject.objectId;
+                  console.log('Using any created object as NFT ID (fallback):', suiObjectId);
+                }
+              }
+              
+              // Last resort: use the transaction digest as a reference
+              if (!suiObjectId) {
+                console.warn('Could not extract NFT object ID from transaction, using transaction digest as reference');
+                suiObjectId = result.digest; // Use transaction digest as fallback
+              }
+              
+              console.log('Final suiObjectId:', suiObjectId);
 
               // Step 5: Confirm mint in database
               if (suiObjectId && createResult.nft_id) {
-                await confirmNFTMint(createResult.nft_id, suiObjectId);
-                
-                // Notify backend for additional fraud analysis
-                await notifyBackendNewNFT({
-                  nftId: createResult.nft_id,
-                  suiObjectId: suiObjectId,
-                  name: formData.title,
-                  description: formData.description || '',
-                  imageUrl: imageUrl,
-                  creator: account.address,
-                  transactionDigest: result.digest
-                });
+                try {
+                  console.log('Confirming mint with:', { nftId: createResult.nft_id, suiObjectId });
+                  await confirmNFTMint(createResult.nft_id, suiObjectId);
+                  console.log('Mint confirmed successfully');
+                  
+                  // Notify backend for additional fraud analysis
+                  await notifyBackendNewNFT({
+                    nftId: createResult.nft_id,
+                    suiObjectId: suiObjectId,
+                    name: formData.title,
+                    description: formData.description || '',
+                    imageUrl: imageUrl,
+                    creator: account.address,
+                    transactionDigest: result.digest
+                  });
+                  console.log('Backend notification sent');
+                } catch (confirmError) {
+                  console.error('Error confirming mint:', confirmError);
+                  toast({
+                    title: "Mint confirmation failed",
+                    description: "NFT was created on blockchain, but database update failed. Check the marketplace.",
+                    variant: "default",
+                  });
+                }
+              } else {
+                console.error('Missing data for confirmation:', { suiObjectId, nftId: createResult.nft_id });
               }
 
               setUploadProgress(100);
@@ -268,12 +420,75 @@ export default function CreateNft() {
               setAnalysisResult(null);
 
             } catch (confirmError) {
-              console.warn('Confirmation failed:', confirmError);
+              console.warn('Transaction details fetch failed:', confirmError);
+              
+              // Even if we can't get transaction details, the NFT was still minted
+              // We can use the transaction digest as a fallback suiObjectId
+              const fallbackSuiObjectId = result.digest;
+              
               toast({
-                title: "NFT minted successfully",
-                description: "NFT was created on blockchain, but confirmation failed. Check the marketplace.",
+                title: "NFT minted successfully! 🎉",
+                description: (
+                  <div className="flex items-center gap-2">
+                    <span>Your NFT has been minted on blockchain</span>
+                    <a 
+                      href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      View Transaction <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ),
                 variant: "default",
               });
+
+              // Try to confirm with fallback suiObjectId
+              if (createResult.nft_id) {
+                try {
+                  console.log('Confirming mint with fallback suiObjectId:', { nftId: createResult.nft_id, suiObjectId: fallbackSuiObjectId });
+                  await confirmNFTMint(createResult.nft_id, fallbackSuiObjectId);
+                  console.log('Mint confirmed with fallback ID');
+                  
+                  // Notify backend for additional fraud analysis
+                  await notifyBackendNewNFT({
+                    nftId: createResult.nft_id,
+                    suiObjectId: fallbackSuiObjectId,
+                    name: formData.title,
+                    description: formData.description || '',
+                    imageUrl: imageUrl,
+                    creator: account.address,
+                    transactionDigest: result.digest
+                  });
+                  console.log('Backend notification sent with fallback ID');
+                } catch (confirmError) {
+                  console.error('Error confirming mint with fallback:', confirmError);
+                  toast({
+                    title: "Database update failed",
+                    description: "NFT was created on blockchain, but database update failed. Check the marketplace.",
+                    variant: "default",
+                  });
+                }
+              }
+
+              setUploadProgress(100);
+
+              // Navigate to marketplace after a short delay
+              setTimeout(() => {
+                navigate('/marketplace');
+              }, 2000);
+
+              // Reset form
+              setFormData({
+                title: '',
+                description: '',
+                price: '',
+                category: '',
+                image: null,
+                preview: null
+              });
+              setAnalysisResult(null);
             }
           },
           onError: (error) => {

@@ -5,8 +5,9 @@ Handles NFT creation, fraud detection, and basic operations following the 8-step
 import uuid
 import math
 import json
+import os
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import Column, String, Text, Boolean, Integer, DateTime, ForeignKey, DECIMAL
@@ -86,7 +87,7 @@ class NFT(Base):
     reason = Column(Text)
     evidence_url = Column(Text)
     analysis_details = Column(JSON)  # Use JSON type instead of Text for proper JSON storage
-    embedding_vector = Column(Vector(768))  # imgbeddings generates 768-dimensional embeddings
+    embedding_vector = Column(Vector(768))  # Gemini description embeddings are 768-dimensional
     status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -112,6 +113,7 @@ class NFTResponse(BaseModel):
     confidence_score: float
     status: str
     created_at: datetime
+    analysis_details: Optional[Dict[str, Any]] = None  # Add analysis_details field
 
 # Import database connection
 try:
@@ -180,26 +182,64 @@ async def create_nft(
             price=request.price
         )
         
-        # Run fraud analysis (synchronous for immediate results)
-        fraud_result = analyze_nft_for_fraud(nft_data)
+        # Run fraud analysis (async call) with better error handling
+        try:
+            fraud_result = await analyze_nft_for_fraud(nft_data)
+            logger.info(f"Fraud analysis completed: is_fraud={fraud_result.get('is_fraud')}, confidence={fraud_result.get('confidence_score')}")
+        except Exception as fraud_error:
+            logger.error(f"Fraud analysis failed: {fraud_error}")
+            # Use safe defaults if fraud analysis fails
+            fraud_result = {
+                "is_fraud": False,
+                "confidence_score": 0.1,
+                "flag_type": None,
+                "reason": f"Fraud analysis error: {str(fraud_error)}",
+                "analysis_details": {"error": str(fraud_error)}
+            }
         
-        # Generate image embedding for similarity search
-        logger.info(f"Generating image embedding for image: {request.image_url}")
+        # Generate image embedding for similarity search using Gemini description analysis
+        logger.info(f"Generating description-based embedding for image: {request.image_url}")
         embedding_service = get_embedding_service()
         image_embedding = None
         
         if embedding_service:
-            # First, generate the embedding for local storage
-            image_embedding = embedding_service.get_image_embedding(request.image_url)
-            
-            if image_embedding:
-                logger.info(f"Successfully generated image embedding with dimension: {len(image_embedding)}")
-            else:
-                logger.warning("Failed to generate image embedding, using None")
+            try:
+                # Use Gemini to analyze image and generate description, then embed the description
+                image_embedding = await embedding_service.get_image_embedding(request.image_url)
+                
+                if image_embedding:
+                    logger.info(f"Successfully generated description-based embedding with dimension: {len(image_embedding)}")
+                else:
+                    logger.warning("Failed to generate description-based embedding, using None")
+            except Exception as embed_error:
+                logger.error(f"Error generating embedding: {embed_error}")
+                image_embedding = None
         else:
-            logger.warning("Image embedding service not available, storing without embedding")
+            logger.warning("Description embedding service not available, storing without embedding")
         
         # Step 4: Supabase: Store Metadata & Embedding
+        # Ensure fraud_result has required fields
+        if not isinstance(fraud_result, dict):
+            fraud_result = {
+                "is_fraud": False,
+                "confidence_score": 0.1,
+                "flag_type": None,
+                "reason": "Invalid fraud analysis result",
+                "analysis_details": {}
+            }
+        
+        # Validate and sanitize fraud result fields
+        is_fraud = bool(fraud_result.get("is_fraud", False))
+        confidence_score = float(fraud_result.get("confidence_score", 0.0))
+        flag_type = fraud_result.get("flag_type")
+        reason = str(fraud_result.get("reason", "Analysis completed"))
+        analysis_details = fraud_result.get("analysis_details", {})
+        
+        # Ensure analysis_details is a dict
+        if not isinstance(analysis_details, dict):
+            analysis_details = {"raw_result": str(analysis_details)}
+        
+        # Create NFT with status "pending" initially
         nft = NFT(
             owner_id=user.id,
             wallet_address=request.wallet_address,
@@ -208,20 +248,74 @@ async def create_nft(
             category=request.category,
             price=request.price,
             image_url=request.image_url,
-            is_fraud=fraud_result.get("is_fraud", False),
-            confidence_score=fraud_result.get("confidence_score", 0.0),
-            flag_type=fraud_result.get("flag_type"),
-            reason=fraud_result.get("reason"),
-            analysis_details=fraud_result.get("analysis_details", {}),  # Store as JSON object
-            embedding_vector=image_embedding,  # Store CLIP embedding as vector
-            status="analyzed"  # Ready for minting
+            is_fraud=is_fraud,
+            confidence_score=confidence_score,
+            flag_type=flag_type,
+            reason=reason,
+            analysis_details=analysis_details,  # Store as JSON object
+            embedding_vector=image_embedding,  # Store description-based embedding as vector
+            status="pending"  # Start with pending status
         )
         
+        logger.info(f"About to add NFT to database: {nft.title}")
         db.add(nft)
-        db.commit()
-        db.refresh(nft)
+        
+        logger.info(f"About to commit NFT to database: {nft.title}")
+        try:
+            db.commit()
+            logger.info(f"Successfully committed NFT to database: {nft.title}")
+        except Exception as commit_error:
+            logger.error(f"Failed to commit NFT to database: {commit_error}")
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Database commit failed: {str(commit_error)}")
+        
+        logger.info(f"About to refresh NFT from database: {nft.title}")
+        try:
+            db.refresh(nft)
+            logger.info(f"Successfully refreshed NFT from database: {nft.title}")
+        except Exception as refresh_error:
+            logger.error(f"Failed to refresh NFT from database: {refresh_error}")
+            # Don't fail the request if refresh fails, but log the issue
+            logger.warning(f"Continuing without refresh - NFT ID: {nft.id}")
+        
+        # Verify the NFT was actually committed by querying it back
+        try:
+            verification_nft = db.query(NFT).filter(NFT.id == nft.id).first()
+            if verification_nft:
+                logger.info(f"Verified NFT exists in database: {verification_nft.id} with status: {verification_nft.status}")
+            else:
+                logger.error(f"CRITICAL: NFT not found in database after commit! ID: {nft.id}")
+        except Exception as verify_error:
+            logger.error(f"Failed to verify NFT in database: {verify_error}")
+        
+        # Check database session status
+        try:
+            # Check if session is still active
+            from sqlalchemy import text
+            db.execute(text("SELECT 1"))
+            logger.info("Database session is still active")
+        except Exception as session_error:
+            logger.error(f"Database session error: {session_error}")
 
-        # Store the embedding in Supabase for vector search
+        # Log successful creation before any background tasks
+        logger.info(f"NFT created successfully: {nft.id} with status: {nft.status}")
+        
+        # Prepare response data
+        response_data = {
+            "success": True,
+            "message": "NFT created and analyzed successfully",
+            "nft_id": str(nft.id),
+            "fraud_analysis": {
+                "is_fraud": is_fraud,
+                "confidence_score": confidence_score,
+                "flag_type": flag_type,
+                "reason": reason
+            },
+            "status": "pending",  # Return current status
+            "next_step": "mint_on_blockchain"  # Guide frontend on next step
+        }
+        
+        # Schedule background task for Supabase embedding storage (optional)
         if embedding_service and image_embedding and supabase_client:
             metadata = {
                 "name": request.title,
@@ -230,34 +324,27 @@ async def create_nft(
                 "nft_id": str(nft.id)
             }
             
-            # Store the embedding in Supabase using the actual NFT ID
-            background_tasks.add_task(
-                embedding_service.get_image_embedding_and_store,
-                request.image_url, 
-                str(nft.id), 
-                metadata
-            )
-            logger.info(f"Scheduled embedding storage in Supabase for NFT {nft.id}")
+            try:
+                # Schedule the background task without blocking the response
+                background_tasks.add_task(
+                    embedding_service.get_image_embedding_and_store,
+                    request.image_url, 
+                    str(nft.id), 
+                    metadata
+                )
+                logger.info(f"Scheduled embedding storage in Supabase for NFT {nft.id}")
+            except Exception as bg_error:
+                logger.warning(f"Failed to schedule background task: {bg_error}")
+                # Don't fail the request if background task scheduling fails
 
-        # Log successful creation
-        logger.info(f"NFT created successfully: {nft.id}")
-
-        return {
-            "success": True,
-            "message": "NFT created and analyzed successfully",
-            "nft_id": str(nft.id),
-            "fraud_analysis": {
-                "is_fraud": fraud_result.get("is_fraud", False),
-                "confidence_score": fraud_result.get("confidence_score", 0.0),
-                "flag_type": fraud_result.get("flag_type"),
-                "reason": fraud_result.get("reason")
-            },
-            "status": "analyzed"
-        }
+        return response_data
 
     except Exception as e:
         logger.error(f"Error creating NFT: {str(e)}")
-        db.rollback()
+        try:
+            db.rollback()
+        except:
+            pass  # Ignore rollback errors
         raise HTTPException(status_code=500, detail=f"Error creating NFT: {str(e)}")
 
 @router.put("/{nft_id}/confirm-mint")
@@ -270,29 +357,126 @@ async def confirm_nft_mint(
     Confirm NFT has been minted on blockchain
     """
     try:
+        # Validate input
+        if not nft_id or not sui_object_id:
+            raise HTTPException(status_code=400, detail="nft_id and sui_object_id are required")
+        
+        # Find the NFT
         nft = db.query(NFT).filter(NFT.id == nft_id).first()
         if not nft:
-            raise HTTPException(status_code=404, detail="NFT not found")
+            raise HTTPException(status_code=404, detail=f"NFT not found with ID: {nft_id}")
         
-        nft.sui_object_id = sui_object_id
-        nft.status = "minted"
-        db.commit()
+        logger.info(f"Confirming mint for NFT {nft_id} with Sui object ID: {sui_object_id}")
+        
+        # Check current status
+        if nft.status == "minted":
+            logger.info(f"NFT {nft_id} already minted, returning existing data")
+            return {
+                "success": True,
+                "message": "NFT already minted",
+                "nft_id": nft_id,
+                "sui_object_id": nft.sui_object_id,
+                "status": "minted"
+            }
+        
+        # Update NFT with Sui object ID and change status to minted
+        try:
+            nft.sui_object_id = sui_object_id
+            nft.status = "minted"
+            db.commit()
+            db.refresh(nft)
+            
+            logger.info(f"NFT mint confirmed successfully: {nft_id} -> {sui_object_id}")
 
+            return {
+                "success": True,
+                "message": "NFT mint confirmed",
+                "nft_id": nft_id,
+                "sui_object_id": sui_object_id,
+                "status": "minted",
+                "fraud_analysis": {
+                    "is_fraud": nft.is_fraud,
+                    "confidence_score": float(nft.confidence_score or 0.0),
+                    "flag_type": nft.flag_type,
+                    "reason": nft.reason
+                }
+            }
+            
+        except Exception as commit_error:
+            logger.error(f"Database commit error: {commit_error}")
+            db.rollback()
+            raise HTTPException(status_code=500, detail=f"Database error: {str(commit_error)}")
+
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error confirming mint for {nft_id}: {str(e)}")
+        try:
+            db.rollback()
+        except:
+            pass
+        raise HTTPException(status_code=500, detail=f"Error confirming mint: {str(e)}")
+
+
+@router.get("/by-wallet/{wallet_address}")
+async def get_nfts_by_wallet(
+    wallet_address: str,
+    page: int = 1,
+    limit: int = 20,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all NFTs owned by a specific wallet address
+    """
+    try:
+        offset = (page - 1) * limit
+        
+        nfts = db.query(NFT).filter(
+            NFT.wallet_address == wallet_address
+        ).order_by(NFT.created_at.desc()).offset(offset).limit(limit).all()
+        
+        total = db.query(NFT).filter(NFT.wallet_address == wallet_address).count()
+        
+        nft_list = []
+        for nft in nfts:
+            nft_list.append({
+                "id": str(nft.id),
+                "title": nft.title,
+                "description": nft.description,
+                "category": nft.category,
+                "price": float(nft.price),
+                "image_url": nft.image_url,
+                "wallet_address": nft.wallet_address,
+                "sui_object_id": nft.sui_object_id,
+                "is_fraud": nft.is_fraud,
+                "confidence_score": float(nft.confidence_score or 0.0),
+                "flag_type": nft.flag_type,
+                "reason": nft.reason,
+                "status": nft.status,
+                "created_at": nft.created_at,
+                "analysis_details": nft.analysis_details
+            })
+        
         return {
-            "success": True,
-            "message": "NFT mint confirmed",
-            "nft_id": nft_id,
-            "sui_object_id": sui_object_id
+            "wallet_address": wallet_address,
+            "nfts": nft_list,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": math.ceil(total / limit) if total > 0 else 0
         }
 
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error confirming mint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching NFTs for wallet: {str(e)}")
+
 
 @router.get("/marketplace")
 async def get_marketplace_nfts(
     page: int = 1,
     limit: int = 20,
+    include_flagged: bool = False,
+    include_pending: bool = False,
     db: Session = Depends(get_db)
 ):
     """
@@ -301,11 +485,20 @@ async def get_marketplace_nfts(
     try:
         offset = (page - 1) * limit
         
-        nfts = db.query(NFT).filter(
-            NFT.status == "minted"
-        ).offset(offset).limit(limit).all()
+        # Base query - include both minted and optionally pending NFTs
+        if include_pending:
+            # Include both pending and minted NFTs
+            query = db.query(NFT).filter(NFT.status.in_(["minted", "pending"]))
+        else:
+            # Only minted NFTs (default behavior)
+            query = db.query(NFT).filter(NFT.status == "minted")
         
-        total = db.query(NFT).filter(NFT.status == "minted").count()
+        # Optionally exclude fraud-flagged NFTs from marketplace
+        if not include_flagged:
+            query = query.filter(NFT.is_fraud == False)
+        
+        nfts = query.order_by(NFT.created_at.desc()).offset(offset).limit(limit).all()
+        total = query.count()
         
         nft_list = []
         for nft in nfts:
@@ -321,7 +514,8 @@ async def get_marketplace_nfts(
                 is_fraud=nft.is_fraud,
                 confidence_score=float(nft.confidence_score or 0.0),
                 status=nft.status,
-                created_at=nft.created_at
+                created_at=nft.created_at,
+                analysis_details=nft.analysis_details
             ))
         
         return {
@@ -329,11 +523,67 @@ async def get_marketplace_nfts(
             "total": total,
             "page": page,
             "limit": limit,
-            "total_pages": math.ceil(total / limit) if total > 0 else 0
+            "total_pages": math.ceil(total / limit) if total > 0 else 0,
+            "include_flagged": include_flagged,
+            "include_pending": include_pending,
+            "status_filter": "minted" if not include_pending else "minted,pending"
         }
 
     except Exception as e:
+        logger.error(f"Error fetching marketplace NFTs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching marketplace NFTs: {str(e)}")
+
+
+@router.get("/all")
+async def get_all_nfts(
+    page: int = 1,
+    limit: int = 20,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all NFTs (for debugging and admin purposes)
+    """
+    try:
+        offset = (page - 1) * limit
+        
+        query = db.query(NFT)
+        if status:
+            query = query.filter(NFT.status == status)
+        
+        nfts = query.order_by(NFT.created_at.desc()).offset(offset).limit(limit).all()
+        total = query.count()
+        
+        nft_list = []
+        for nft in nfts:
+            nft_list.append({
+                "id": str(nft.id),
+                "title": nft.title,
+                "description": nft.description,
+                "category": nft.category,
+                "price": float(nft.price),
+                "image_url": nft.image_url,
+                "wallet_address": nft.wallet_address,
+                "sui_object_id": nft.sui_object_id,
+                "is_fraud": nft.is_fraud,
+                "confidence_score": float(nft.confidence_score or 0.0),
+                "flag_type": nft.flag_type,
+                "reason": nft.reason,
+                "status": nft.status,
+                "created_at": nft.created_at
+            })
+        
+        return {
+            "nfts": nft_list,
+            "total": total,
+            "page": page,
+            "limit": limit,
+            "total_pages": math.ceil(total / limit) if total > 0 else 0,
+            "filter_status": status
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error fetching all NFTs: {str(e)}")
 
 @router.get("/{nft_id}")
 async def get_nft_details(
@@ -363,7 +613,8 @@ async def get_nft_details(
                 is_fraud=nft.is_fraud,
                 confidence_score=float(nft.confidence_score or 0.0),
                 status=nft.status,
-                created_at=nft.created_at
+                created_at=nft.created_at,
+                analysis_details=nft.analysis_details
             ),
             "owner": {
                 "wallet_address": user.wallet_address if user else nft.wallet_address,
@@ -457,19 +708,19 @@ async def analyze_external_nft(notification: NFTMintedNotification, db: Session)
             price=0.0  # External NFTs don't have price set by us
         )
         
-        fraud_result = analyze_nft_for_fraud(nft_data)
+        fraud_result = await analyze_nft_for_fraud(nft_data)
         
-        # Generate image embedding
-        logger.info(f"Generating image embedding for external NFT: {notification.image_url}")
+        # Generate image embedding using Gemini description analysis
+        logger.info(f"Generating description-based embedding for external NFT: {notification.image_url}")
         embedding_service = get_embedding_service()
         image_embedding = None
         
         if embedding_service:
-            image_embedding = embedding_service.get_image_embedding(notification.image_url)
+            image_embedding = await embedding_service.get_image_embedding(notification.image_url)
             if image_embedding:
-                logger.info(f"Successfully generated image embedding for external NFT")
+                logger.info(f"Successfully generated description-based embedding for external NFT")
             else:
-                logger.warning("Failed to generate CLIP embedding for external NFT")
+                logger.warning("Failed to generate description-based embedding for external NFT")
         
         # Create NFT record
         nft = NFT(
@@ -486,7 +737,7 @@ async def analyze_external_nft(notification: NFTMintedNotification, db: Session)
             flag_type=fraud_result.get("flag_type"),
             reason=fraud_result.get("reason"),
             analysis_details=fraud_result.get("analysis_details", {}),
-            embedding_vector=image_embedding,  # Store CLIP embedding
+            embedding_vector=image_embedding,  # Store description-based embedding
             status="minted"
         )
         
@@ -507,7 +758,7 @@ async def search_similar_nfts(
     db: Session = Depends(get_db)
 ):
     """
-    Search for similar NFTs based on image embeddings using CLIP
+    Search for similar NFTs based on description embeddings using Gemini analysis
     """
     try:
         # Generate embedding for query image
@@ -515,7 +766,7 @@ async def search_similar_nfts(
         if not embedding_service:
             raise HTTPException(status_code=500, detail="Image embedding service not available")
         
-        query_embedding = embedding_service.get_image_embedding(image_url)
+        query_embedding = await embedding_service.get_image_embedding(image_url)
         if not query_embedding:
             raise HTTPException(status_code=400, detail="Failed to generate embedding for query image")
         
@@ -621,3 +872,143 @@ async def analyze_potential_duplicates(
     except Exception as e:
         logger.error(f"Error analyzing duplicates: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error analyzing duplicates: {str(e)}")
+
+@router.get("/status/{nft_id}")
+async def get_nft_status(
+    nft_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed status information for an NFT (for debugging)
+    """
+    try:
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not nft:
+            raise HTTPException(status_code=404, detail="NFT not found")
+        
+        user = db.query(User).filter(User.id == nft.owner_id).first()
+        
+        return {
+            "nft_id": str(nft.id),
+            "title": nft.title,
+            "status": nft.status,
+            "sui_object_id": nft.sui_object_id,
+            "is_fraud": nft.is_fraud,
+            "confidence_score": float(nft.confidence_score or 0.0),
+            "flag_type": nft.flag_type,
+            "reason": nft.reason,
+            "created_at": nft.created_at,
+            "owner": {
+                "wallet_address": user.wallet_address if user else nft.wallet_address,
+                "username": user.username if user else f"User{nft.wallet_address[:8]}"
+            },
+            "fraud_analysis": {
+                "is_fraud": nft.is_fraud,
+                "confidence_score": float(nft.confidence_score or 0.0),
+                "flag_type": nft.flag_type,
+                "reason": nft.reason,
+                "has_embedding": nft.embedding_vector is not None
+            },
+            "next_steps": {
+                "pending": "Mint on blockchain",
+                "minted": "List for sale",
+                "listed": "Ready for purchase"
+            }.get(nft.status, "Unknown status")
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting NFT status: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting NFT status: {str(e)}")
+
+@router.get("/debug/status-summary")
+async def get_status_summary(db: Session = Depends(get_db)):
+    """
+    Debug endpoint to get status summary of all NFTs
+    """
+    try:
+        nfts = db.query(NFT).all()
+        
+        status_counts = {}
+        sui_object_id_counts = {}
+        embedding_counts = {}
+        
+        for nft in nfts:
+            status = nft.status or "unknown"
+            status_counts[status] = status_counts.get(status, 0) + 1
+            
+            if nft.sui_object_id:
+                sui_object_id_counts["with_sui_id"] = sui_object_id_counts.get("with_sui_id", 0) + 1
+            else:
+                sui_object_id_counts["without_sui_id"] = sui_object_id_counts.get("without_sui_id", 0) + 1
+            
+            if nft.embedding_vector:
+                embedding_counts["with_embedding"] = embedding_counts.get("with_embedding", 0) + 1
+            else:
+                embedding_counts["without_embedding"] = embedding_counts.get("without_embedding", 0) + 1
+        
+        return {
+            "total_nfts": len(nfts),
+            "status_counts": status_counts,
+            "sui_object_id_counts": sui_object_id_counts,
+            "embedding_counts": embedding_counts,
+            "recent_nfts": [
+                {
+                    "id": str(nft.id),
+                    "title": nft.title,
+                    "status": nft.status,
+                    "sui_object_id": nft.sui_object_id,
+                    "is_fraud": nft.is_fraud,
+                    "has_embedding": bool(nft.embedding_vector),
+                    "has_analysis_details": bool(nft.analysis_details),
+                    "created_at": nft.created_at.isoformat() if nft.created_at else None
+                }
+                for nft in sorted(nfts, key=lambda x: x.created_at or datetime.min, reverse=True)[:10]
+            ]
+        }
+    except Exception as e:
+        logger.error(f"Error in status summary: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/debug/embedding-status")
+async def get_embedding_status():
+    """
+    Debug endpoint to check embedding service status
+    """
+    try:
+        from agent.clip_embeddings import get_embedding_service
+        from agent.gemini_image_analyzer import get_gemini_analyzer
+        from core.config import settings
+        
+        # Check configuration
+        config_status = {
+            "google_api_key": bool(settings.google_api_key),
+            "google_model": settings.google_model or "Not set",
+            "embedding_model": settings.gemini_embedding_model or "Not set",
+            "database_url": bool(settings.supabase_db_url)
+        }
+        
+        # Check embedding service
+        embedding_service = get_embedding_service()
+        embedding_status = {
+            "available": embedding_service is not None,
+            "initialized": embedding_service.initialized if embedding_service else False
+        }
+        
+        # Check Gemini analyzer
+        gemini_analyzer = await get_gemini_analyzer()
+        gemini_status = {
+            "available": gemini_analyzer is not None,
+            "initialized": gemini_analyzer.initialized if gemini_analyzer else False,
+            "chat_model": gemini_analyzer.gemini_chat is not None if gemini_analyzer else False,
+            "embeddings_model": gemini_analyzer.embeddings is not None if gemini_analyzer else False
+        }
+        
+        return {
+            "configuration": config_status,
+            "embedding_service": embedding_status,
+            "gemini_analyzer": gemini_status
+        }
+        
+    except Exception as e:
+        logger.error(f"Error checking embedding status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

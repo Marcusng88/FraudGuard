@@ -25,9 +25,56 @@ export interface NFT {
   confidence_score: number;
   flag_type?: number;
   reason?: string;
+  analysis_details?: AnalysisDetails; // Full LLM analysis details from Supabase
+  embedding_vector?: number[]; // Vector embedding for similarity search
+  evidence_url?: string;
   status: string;
   created_at: string;
 }
+
+// Analysis Details Interface
+export interface AnalysisDetails {
+  llm_decision?: {
+    reason?: string;
+    is_fraud?: boolean;
+    flag_type?: number;
+    recommendation?: string;
+    confidence_score?: number;
+    primary_concerns?: string[];
+  };
+  image_analysis?: {
+    risk_level?: string;
+    description?: string;
+    color_palette?: string[];
+    artistic_style?: string;
+    recommendation?: string;
+    fraud_indicators?: Record<string, unknown>;
+    uniqueness_score?: number;
+    quality_assessment?: string;
+    key_visual_elements?: string[];
+    overall_fraud_score?: number;
+    composition_analysis?: string;
+    artistic_merit?: string;
+    technical_quality?: string;
+    market_value_assessment?: string;
+    confidence_in_analysis?: number;
+    additional_notes?: string;
+  };
+  metadata_analysis?: {
+    analysis?: string;
+    metadata_risk?: number;
+    quality_score?: number;
+    suspicious_indicators?: string[];
+  };
+  analysis_timestamp?: string;
+  similarity_results?: {
+    is_duplicate?: boolean;
+    similar_nfts?: unknown[];
+    max_similarity?: number;
+  };
+}
+
+
 
 export interface NFTCreationRequest {
   title: string;
@@ -42,7 +89,14 @@ export interface CreateNFTResponse {
   success: boolean;
   message: string;
   nft_id: string;
-  analysis_status: string;
+  fraud_analysis: {
+    is_fraud: boolean;
+    confidence_score: number;
+    flag_type?: number;
+    reason?: string;
+  };
+  status: string;
+  next_step: string;
 }
 
 export interface ConfirmMintResponse {
@@ -100,7 +154,7 @@ export async function confirmNFTMint(nftId: string, suiObjectId: string): Promis
 }
 
 export async function getMarketplaceNFTs(page: number = 1, limit: number = 20): Promise<MarketplaceResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/nft/marketplace?page=${page}&limit=${limit}`);
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/nfts?page=${page}&limit=${limit}`);
 
   if (!response.ok) {
     const error = await response.json();

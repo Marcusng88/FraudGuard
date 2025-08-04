@@ -58,6 +58,8 @@ module fraudguard::fraudguard_nft {
         creator: address,
         name: String,
         image_url: String,
+        description: String,
+        created_at: u64,
     }
 
     /// Emitted when an NFT is flagged for fraud
@@ -122,6 +124,7 @@ module fraudguard::fraudguard_nft {
         let creator = tx_context::sender(ctx);
         let nft_id = object::new(ctx);
         let nft_id_copy = object::uid_to_inner(&nft_id);
+        let created_at = tx_context::epoch_timestamp_ms(ctx);
         
         let nft = FraudGuardNFT {
             id: nft_id,
@@ -129,7 +132,7 @@ module fraudguard::fraudguard_nft {
             description: string::utf8(description),
             image_url: url::new_unsafe_from_bytes(image_url),
             creator,
-            created_at: tx_context::epoch_timestamp_ms(ctx),
+            created_at,
         };
 
         // Place the NFT in the kiosk
@@ -141,6 +144,8 @@ module fraudguard::fraudguard_nft {
             creator,
             name: string::utf8(name),
             image_url: string::utf8(image_url),
+            description: string::utf8(description),
+            created_at,
         });
 
         event::emit(NFTPlacedInKiosk {
@@ -163,6 +168,7 @@ module fraudguard::fraudguard_nft {
         let creator = tx_context::sender(ctx);
         let nft_id = object::new(ctx);
         let nft_id_copy = object::uid_to_inner(&nft_id);
+        let created_at = tx_context::epoch_timestamp_ms(ctx);
         
         let nft = FraudGuardNFT {
             id: nft_id,
@@ -170,7 +176,7 @@ module fraudguard::fraudguard_nft {
             description: string::utf8(description),
             image_url: url::new_unsafe_from_bytes(image_url),
             creator,
-            created_at: tx_context::epoch_timestamp_ms(ctx),
+            created_at,
         };
 
         // Transfer to recipient
@@ -182,6 +188,46 @@ module fraudguard::fraudguard_nft {
             creator,
             name: string::utf8(name),
             image_url: string::utf8(image_url),
+            description: string::utf8(description),
+            created_at,
+        });
+    }
+
+    /// Mint NFT (entry function for frontend integration)
+    public entry fun mint_nft_with_id(
+        name: vector<u8>,
+        description: vector<u8>,
+        image_url: vector<u8>,
+        recipient: address,
+        ctx: &mut tx_context::TxContext
+    ) {
+        assert!(!std::vector::is_empty(&name), EEmptyName);
+        
+        let creator = tx_context::sender(ctx);
+        let nft_id = object::new(ctx);
+        let nft_id_copy = object::uid_to_inner(&nft_id);
+        let created_at = tx_context::epoch_timestamp_ms(ctx);
+        
+        let nft = FraudGuardNFT {
+            id: nft_id,
+            name: string::utf8(name),
+            description: string::utf8(description),
+            image_url: url::new_unsafe_from_bytes(image_url),
+            creator,
+            created_at,
+        };
+
+        // Transfer to recipient
+        transfer::public_transfer(nft, recipient);
+
+        // Emit event
+        event::emit(NFTMinted {
+            nft_id: nft_id_copy,
+            creator,
+            name: string::utf8(name),
+            image_url: string::utf8(image_url),
+            description: string::utf8(description),
+            created_at,
         });
     }
 

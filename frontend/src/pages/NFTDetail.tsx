@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { 
   ArrowLeft, 
   Shield, 
@@ -18,9 +19,19 @@ import {
   User,
   Calendar,
   DollarSign,
-  TrendingUp
+  TrendingUp,
+  Brain,
+  Info,
+  Image,
+  FileText,
+  Search,
+  Clock,
+  CheckCircle,
+  XCircle,
+  Star
 } from 'lucide-react';
 import { useNFTDetails } from '@/hooks/useMarketplace';
+import { AnalysisDetails } from '@/lib/api';
 
 const threatConfig = {
   safe: {
@@ -93,6 +104,39 @@ const NFTDetail = () => {
   const config = threatConfig[threatLevel];
   const Icon = config.icon;
 
+  // Helper function to display data with fallback
+  const displayData = (value: string | number | null | undefined, fallback: string = '-'): string => {
+    if (value === null || value === undefined || value === '') {
+      return fallback;
+    }
+    return String(value);
+  };
+
+  // Helper function to format confidence score
+  const formatConfidence = (score: number | null | undefined) => {
+    if (score === null || score === undefined) return '-';
+    return `${(score * 100).toFixed(1)}%`;
+  };
+
+  // Helper function to extract analysis details
+  const getAnalysisDetails = (): AnalysisDetails | null => {
+    if (!nft.analysis_details) return null;
+    
+    try {
+      // If it's a string, parse it as JSON
+      if (typeof nft.analysis_details === 'string') {
+        return JSON.parse(nft.analysis_details) as AnalysisDetails;
+      }
+      // If it's already an object, return it
+      return nft.analysis_details as AnalysisDetails;
+    } catch (error) {
+      console.error('Error parsing analysis details:', error);
+      return null;
+    }
+  };
+
+  const analysisDetails = getAnalysisDetails();
+
   return (
     <div className="min-h-screen bg-background relative">
       <FloatingWarningIcon />
@@ -116,9 +160,9 @@ const NFTDetail = () => {
 
       {/* Main Content */}
       <div className="container mx-auto px-6 pb-16">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-12">
-          {/* Left Column - Image */}
-          <div className="space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          {/* Left Column - Image Gallery */}
+          <div className="lg:col-span-1">
             <Card className="glass-panel overflow-hidden">
               <div className="aspect-square relative">
                 <img
@@ -130,7 +174,7 @@ const NFTDetail = () => {
                   }}
                 />
                 
-                {/* Threat Level Overlay */}
+                {/* Threat Level Badge */}
                 <div className={`absolute top-4 right-4 ${config.bg} ${config.border} border px-3 py-1 rounded-lg backdrop-blur-sm`}>
                   <div className="flex items-center gap-2">
                     <Icon className={`w-4 h-4 ${config.color}`} />
@@ -140,51 +184,66 @@ const NFTDetail = () => {
                   </div>
                 </div>
 
-                {/* Price Overlay */}
-                {nft.price && (
-                  <div className="absolute bottom-4 left-4 glass-panel px-4 py-2 rounded-lg">
-                    <div className="flex items-center gap-2">
-                      <DollarSign className="w-4 h-4 text-primary" />
-                      <span className="font-bold text-primary text-lg">
-                        {nft.price} SUI
-                      </span>
-                    </div>
+                {/* Confidence Score Badge */}
+                <div className="absolute top-4 left-4 glass-panel px-3 py-1 rounded-lg">
+                  <div className="flex items-center gap-1">
+                    <Star className="w-3 h-3 text-primary" />
+                    <span className="text-xs font-medium text-primary">
+                      {formatConfidence(nft.confidence_score)}
+                    </span>
                   </div>
-                )}
+                </div>
               </div>
             </Card>
 
-            {/* Action Buttons */}
-            <div className="flex gap-4">
-              <Button 
-                className="flex-1" 
-                variant={threatLevel === 'danger' ? 'destructive' : 'default'}
-                disabled={threatLevel === 'danger'}
-              >
-                {threatLevel === 'danger' ? 'Not Available' : `Buy for ${nft.price} SUI`}
-              </Button>
-              <Button variant="outline" size="icon">
-                <Heart className="w-4 h-4" />
-              </Button>
-              <Button variant="outline" size="icon">
-                <Share className="w-4 h-4" />
-              </Button>
+            {/* Quick Stats */}
+            <div className="mt-6 grid grid-cols-2 gap-4">
+              <Card className="glass-panel p-4 text-center">
+                <div className="text-2xl font-bold text-primary">{formatConfidence(nft.confidence_score)}</div>
+                <div className="text-xs text-muted-foreground">Confidence</div>
+              </Card>
+              <Card className="glass-panel p-4 text-center">
+                <div className="text-2xl font-bold text-secondary">
+                  {nft.is_fraud ? 'FLAGGED' : 'SAFE'}
+                </div>
+                <div className="text-xs text-muted-foreground">Status</div>
+              </Card>
             </div>
           </div>
 
-          {/* Right Column - Details */}
-          <div className="space-y-8">
-            {/* Basic Info */}
+          {/* Center Column - Product Info */}
+          <div className="lg:col-span-1 space-y-6">
+            {/* Product Header */}
             <div className="space-y-4">
-              <h1 className="text-3xl font-bold text-foreground">{nft.title}</h1>
-              
+              <div className="flex items-start justify-between">
+                <div className="flex-1">
+                  <h1 className="text-3xl font-bold text-foreground mb-2">
+                    {displayData(nft.title, 'Untitled NFT')}
+                  </h1>
+                  <div className="flex items-center gap-2 mb-3">
+                    <Badge variant="outline" className="text-xs">
+                      {displayData(nft.category, 'NFT')}
+                    </Badge>
+                    <Badge variant="outline" className="text-xs">
+                      {nft.status ? nft.status.charAt(0).toUpperCase() + nft.status.slice(1) : 'Active'}
+                    </Badge>
+                  </div>
+                </div>
+                {nft.price && (
+                  <div className="text-right">
+                    <div className="text-3xl font-bold text-primary">{nft.price} SUI</div>
+                    <div className="text-sm text-muted-foreground">Current Price</div>
+                  </div>
+                )}
+              </div>
+
               {nft.description && (
                 <p className="text-muted-foreground leading-relaxed">
                   {nft.description}
                 </p>
               )}
 
-              {/* Threat Level Info */}
+              {/* Security Status */}
               <Card className={`glass-panel p-4 ${config.border} border`}>
                 <div className="flex items-start gap-3">
                   <Icon className={`w-5 h-5 ${config.color} mt-0.5`} />
@@ -195,119 +254,518 @@ const NFTDetail = () => {
                     <p className="text-sm text-muted-foreground">
                       {config.description}
                     </p>
-                    {nft.confidence_score && (
-                      <p className="text-xs text-muted-foreground mt-2">
-                        Confidence Score: {(nft.confidence_score * 100).toFixed(1)}%
-                      </p>
-                    )}
                   </div>
                 </div>
               </Card>
             </div>
 
-            <Separator />
-
-            {/* Creator & Owner Info */}
-            <div className="space-y-6">
-              <div>
-                <h3 className="font-semibold text-foreground mb-4">Creator</h3>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center">
-                    <User className="w-5 h-5 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">
-                      {`${nft.wallet_address.slice(0, 8)}...`}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm text-muted-foreground">
-                        {nft.wallet_address.slice(0, 20)}...
+            {/* Action Buttons */}
+            <div className="space-y-4">
+              <div className="flex gap-3">
+                <Button 
+                  className="flex-1" 
+                  variant={threatLevel === 'danger' ? 'destructive' : 'default'}
+                  disabled={threatLevel === 'danger'}
+                  size="lg"
+                >
+                  {threatLevel === 'danger' ? 'Not Available' : `Buy for ${nft.price} SUI`}
+                </Button>
+                <Button variant="outline" size="icon">
+                  <Heart className="w-4 h-4" />
+                </Button>
+                <Button variant="outline" size="icon">
+                  <Share className="w-4 h-4" />
+                </Button>
+              </div>
+              
+              {threatLevel === 'danger' && (
+                <Card className="glass-panel p-4 border-destructive/30">
+                  <div className="flex items-start gap-3">
+                    <AlertTriangle className="w-5 h-5 text-destructive mt-0.5" />
+                    <div>
+                      <p className="font-medium text-destructive mb-1">
+                        Trading Disabled
                       </p>
-                      <Badge variant="outline" className="text-xs bg-success/10 text-success border-success/30">
-                        <Shield className="w-3 h-3 mr-1" />
-                        Creator
-                      </Badge>
+                      <p className="text-sm text-muted-foreground">
+                        This NFT has been flagged for potential fraud and is not available for purchase.
+                      </p>
                     </div>
                   </div>
-                </div>
-              </div>
-
-              <div>
-                <h3 className="font-semibold text-foreground mb-4">Current Owner</h3>
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 bg-secondary/20 rounded-full flex items-center justify-center">
-                    <User className="w-5 h-5 text-secondary" />
-                  </div>
-                  <div>
-                    <p className="font-medium text-foreground">
-                      {`${nft.wallet_address.slice(0, 8)}...`}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm text-muted-foreground">
-                        {nft.wallet_address.slice(0, 20)}...
-                      </p>
-                      <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">
-                        <User className="w-3 h-3 mr-1" />
-                        Owner
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-              </div>
+                </Card>
+              )}
             </div>
 
-            <Separator />
+            {/* Creator & Owner Info */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-foreground">Ownership</h3>
+              <div className="grid grid-cols-1 gap-4">
+                <Card className="glass-panel p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center">
+                      <User className="w-5 h-5 text-primary" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium text-foreground">Creator</p>
+                      <p className="text-sm text-muted-foreground">
+                        {nft.wallet_address ? `${nft.wallet_address.slice(0, 8)}...${nft.wallet_address.slice(-6)}` : '-'}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-xs bg-success/10 text-success border-success/30">
+                      <Shield className="w-3 h-3 mr-1" />
+                      Creator
+                    </Badge>
+                  </div>
+                </Card>
+
+                <Card className="glass-panel p-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 bg-secondary/20 rounded-full flex items-center justify-center">
+                      <User className="w-5 h-5 text-secondary" />
+                    </div>
+                    <div className="flex-1">
+                      <p className="font-medium text-foreground">Current Owner</p>
+                      <p className="text-sm text-muted-foreground">
+                        {owner?.wallet_address ? `${owner.wallet_address.slice(0, 8)}...${owner.wallet_address.slice(-6)}` : '-'}
+                      </p>
+                    </div>
+                    <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/30">
+                      <User className="w-3 h-3 mr-1" />
+                      Owner
+                    </Badge>
+                  </div>
+                </Card>
+              </div>
+            </div>
 
             {/* NFT Details */}
             <div className="space-y-4">
               <h3 className="font-semibold text-foreground">Details</h3>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-muted-foreground">Created</p>
-                  <p className="text-sm font-medium text-foreground">
-                    {new Date(nft.created_at).toLocaleDateString()}
-                  </p>
+              <Card className="glass-panel p-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-muted-foreground">Created</p>
+                    <p className="font-medium text-foreground">
+                      {nft.created_at ? new Date(nft.created_at).toLocaleDateString() : '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Blockchain</p>
+                    <p className="font-medium text-foreground">Sui Network</p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Object ID</p>
+                    <p className="font-medium text-foreground font-mono text-xs">
+                      {displayData(nft.sui_object_id, '-')}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-muted-foreground">Flag Type</p>
+                    <p className="font-medium text-foreground">
+                      {displayData(nft.flag_type, '-')}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Status</p>
-                  <Badge variant="outline" className="text-xs">
-                    {nft.status.charAt(0).toUpperCase() + nft.status.slice(1)}
-                  </Badge>
-                </div>
-                <div>
-                  <p className="text-sm text-muted-foreground">Blockchain</p>
-                  <p className="text-sm font-medium text-foreground">Sui Network</p>
-                </div>
-              </div>
+              </Card>
             </div>
+          </div>
 
-            {/* Fraud Analysis */}
-            {nft.is_fraud && (
-              <>
-                <Separator />
-                <div className="space-y-4">
-                  <h3 className="font-semibold text-destructive">Fraud Alert</h3>
-                  <div className="space-y-3">
-                    <Card className="glass-panel p-4 border-destructive/30">
-                      <div className="flex items-start gap-3">
-                        <AlertTriangle className="w-5 h-5 text-destructive mt-0.5" />
-                        <div className="flex-1">
-                          <p className="font-medium text-destructive mb-1">
-                            Potential Fraud Detected
-                          </p>
-                          <p className="text-sm text-muted-foreground mb-2">
-                            {nft.reason || "This NFT has been flagged for potential fraud."}
-                          </p>
-                          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                            <span>Confidence: {(nft.confidence_score * 100).toFixed(1)}%</span>
+          {/* Right Column - Analysis Tabs */}
+          <div className="lg:col-span-1">
+            <Card className="glass-panel">
+              <Tabs defaultValue="overview" className="w-full">
+                <TabsList className="grid w-full grid-cols-4">
+                  <TabsTrigger value="overview">Overview</TabsTrigger>
+                  <TabsTrigger value="analysis">Analysis</TabsTrigger>
+                  <TabsTrigger value="fraud">Fraud Check</TabsTrigger>
+                  <TabsTrigger value="details">Details</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="overview" className="space-y-4 p-4">
+                  <div className="space-y-4">
+                    <div className="flex items-center gap-2">
+                      <Brain className="w-5 h-5 text-primary" />
+                      <h3 className="font-semibold text-foreground text-base">AI Analysis Summary</h3>
+                    </div>
+                    
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-base text-muted-foreground">Overall Status:</span>
+                        <Badge 
+                          variant="outline" 
+                          className={nft.is_fraud ? 'text-destructive border-destructive/30' : 'text-success border-success/30'}
+                        >
+                          {nft.is_fraud ? 'FLAGGED' : 'VERIFIED'}
+                        </Badge>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <span className="text-base text-muted-foreground">Confidence Score:</span>
+                        <span className="text-base font-medium text-foreground">
+                          {formatConfidence(nft.confidence_score)}
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <span className="text-base text-muted-foreground">Analysis Time:</span>
+                        <span className="text-base text-foreground">
+                          {analysisDetails?.analysis_timestamp ? 
+                            new Date(analysisDetails.analysis_timestamp).toLocaleDateString() : '-'}
+                        </span>
+                      </div>
+                    </div>
+
+                    {nft.reason && (
+                      <div className="space-y-2">
+                        <span className="text-base text-muted-foreground">Analysis Reason:</span>
+                        <p className="text-base text-foreground bg-muted/30 p-3 rounded-lg">
+                          {nft.reason}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="analysis" className="space-y-4 p-4">
+                  <div className="space-y-4">
+                    {/* LLM Decision */}
+                    {analysisDetails?.llm_decision && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Brain className="w-5 h-5 text-primary" />
+                          <h4 className="font-medium text-foreground text-base">AI Decision</h4>
+                        </div>
+                        <div className="space-y-3 text-base">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Recommendation:</span>
+                            <Badge variant="outline" className="text-sm">
+                              {analysisDetails.llm_decision.recommendation || '-'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Primary Concerns:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.llm_decision.primary_concerns?.length || 0} issues
+                            </span>
+                          </div>
+                          {analysisDetails.llm_decision.primary_concerns && analysisDetails.llm_decision.primary_concerns.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Concerns:</span>
+                              <ul className="text-sm text-foreground space-y-2">
+                                {analysisDetails.llm_decision.primary_concerns.slice(0, 3).map((concern, index) => (
+                                  <li key={index} className="flex items-start gap-2">
+                                    <XCircle className="w-4 h-4 text-destructive mt-0.5 flex-shrink-0" />
+                                    <span>{concern}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Image Analysis */}
+                    {analysisDetails?.image_analysis && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Image className="w-5 h-5 text-primary" />
+                          <h4 className="font-medium text-foreground text-base">Image Analysis</h4>
+                        </div>
+                        <div className="space-y-3 text-base">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Risk Level:</span>
+                            <Badge variant="outline" className="text-sm">
+                              {analysisDetails.image_analysis.risk_level || 'unknown'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Artistic Style:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.image_analysis.artistic_style || '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Uniqueness:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.image_analysis.uniqueness_score ? 
+                                `${(analysisDetails.image_analysis.uniqueness_score * 100).toFixed(1)}%` : '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Fraud Score:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.image_analysis.overall_fraud_score ? 
+                                `${(analysisDetails.image_analysis.overall_fraud_score * 100).toFixed(1)}%` : '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Quality:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.image_analysis.quality_assessment || '-'}
+                            </span>
+                          </div>
+                          {analysisDetails.image_analysis.color_palette && analysisDetails.image_analysis.color_palette.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Color Palette:</span>
+                              <div className="flex flex-wrap gap-2">
+                                {analysisDetails.image_analysis.color_palette.slice(0, 5).map((color, index) => (
+                                  <Badge key={index} variant="outline" className="text-sm">
+                                    {color}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {analysisDetails.image_analysis.key_visual_elements && analysisDetails.image_analysis.key_visual_elements.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Key Elements:</span>
+                              <div className="flex flex-wrap gap-2">
+                                {analysisDetails.image_analysis.key_visual_elements.slice(0, 3).map((element, index) => (
+                                  <Badge key={index} variant="outline" className="text-sm">
+                                    {element}
+                                  </Badge>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          {analysisDetails.image_analysis.description && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Description:</span>
+                              <p className="text-sm text-foreground bg-muted/30 p-3 rounded max-h-24 overflow-y-auto">
+                                {analysisDetails.image_analysis.description}
+                              </p>
+                            </div>
+                          )}
+                          {analysisDetails.image_analysis.composition_analysis && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Composition:</span>
+                              <p className="text-sm text-foreground bg-muted/30 p-3 rounded">
+                                {analysisDetails.image_analysis.composition_analysis}
+                              </p>
+                            </div>
+                          )}
+                          {analysisDetails.image_analysis.artistic_merit && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Artistic Merit:</span>
+                              <p className="text-sm text-foreground bg-muted/30 p-3 rounded">
+                                {analysisDetails.image_analysis.artistic_merit}
+                              </p>
+                            </div>
+                          )}
+                          {analysisDetails.image_analysis.additional_notes && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Additional Notes:</span>
+                              <p className="text-sm text-foreground bg-muted/30 p-3 rounded">
+                                {analysisDetails.image_analysis.additional_notes}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Similarity Results */}
+                    {analysisDetails?.similarity_results && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Search className="w-5 h-5 text-primary" />
+                          <h4 className="font-medium text-foreground text-base">Similarity Check</h4>
+                        </div>
+                        <div className="space-y-3 text-base">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Is Duplicate:</span>
+                            <Badge variant="outline" className={`text-sm ${analysisDetails.similarity_results.is_duplicate ? 'text-destructive border-destructive/30' : 'text-success border-success/30'}`}>
+                              {analysisDetails.similarity_results.is_duplicate ? 'Yes' : 'No'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Max Similarity:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.similarity_results.max_similarity ? 
+                                `${(analysisDetails.similarity_results.max_similarity * 100).toFixed(1)}%` : '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Similar NFTs:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.similarity_results.similar_nfts?.length || 0} found
+                            </span>
                           </div>
                         </div>
                       </div>
-                    </Card>
+                    )}
                   </div>
-                </div>
-              </>
-            )}
+                </TabsContent>
+                
+                <TabsContent value="fraud" className="space-y-4 p-4">
+                  <div className="space-y-4">
+                    {/* Fraud Indicators */}
+                    {analysisDetails?.image_analysis?.fraud_indicators && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-5 h-5 text-primary" />
+                          <h4 className="font-medium text-foreground text-base">Fraud Indicators</h4>
+                        </div>
+                        <div className="space-y-3 text-base">
+                          {Object.entries(analysisDetails.image_analysis.fraud_indicators).map(([indicator, details]) => {
+                            if (typeof details === 'object' && details !== null) {
+                              const detected = (details as any).detected;
+                              const confidence = (details as any).confidence;
+                              const evidence = (details as any).evidence;
+                              
+                              return (
+                                <div key={indicator} className="space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-muted-foreground capitalize">
+                                      {indicator.replace(/_/g, ' ')}:
+                                    </span>
+                                    <Badge 
+                                      variant="outline" 
+                                      className={`text-sm ${detected ? 'text-destructive border-destructive/30' : 'text-success border-success/30'}`}
+                                    >
+                                      {detected ? 'Detected' : 'Clear'}
+                                    </Badge>
+                                  </div>
+                                  {confidence !== undefined && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm text-muted-foreground">Confidence:</span>
+                                      <span className="text-sm text-foreground">
+                                        {typeof confidence === 'number' ? `${(confidence * 100).toFixed(1)}%` : confidence}
+                                      </span>
+                                    </div>
+                                  )}
+                                  {evidence && (
+                                    <div className="space-y-2">
+                                      <span className="text-sm text-muted-foreground">Evidence:</span>
+                                      <p className="text-sm text-foreground bg-muted/30 p-3 rounded">
+                                        {evidence}
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            }
+                            return null;
+                          })}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Overall Fraud Assessment */}
+                    {analysisDetails?.image_analysis && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Shield className="w-5 h-5 text-primary" />
+                          <h4 className="font-medium text-foreground text-base">Overall Assessment</h4>
+                        </div>
+                        <div className="space-y-3 text-base">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Fraud Score:</span>
+                            <span className="text-foreground font-medium">
+                              {analysisDetails.image_analysis.overall_fraud_score ? 
+                                `${(analysisDetails.image_analysis.overall_fraud_score * 100).toFixed(1)}%` : '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Risk Level:</span>
+                            <Badge 
+                              variant="outline" 
+                              className={`text-sm ${
+                                analysisDetails.image_analysis.risk_level === 'high' ? 'text-destructive border-destructive/30' :
+                                analysisDetails.image_analysis.risk_level === 'medium' ? 'text-warning border-warning/30' :
+                                'text-success border-success/30'
+                              }`}
+                            >
+                              {analysisDetails.image_analysis.risk_level || 'unknown'}
+                            </Badge>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Recommendation:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.image_analysis.recommendation || '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Analysis Confidence:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.image_analysis.confidence_in_analysis ? 
+                                `${(analysisDetails.image_analysis.confidence_in_analysis * 100).toFixed(1)}%` : '-'}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="details" className="space-y-4 p-4">
+                  <div className="space-y-4">
+                    {/* Metadata Analysis */}
+                    {analysisDetails?.metadata_analysis && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-5 h-5 text-primary" />
+                          <h4 className="font-medium text-foreground text-base">Metadata Analysis</h4>
+                        </div>
+                        <div className="space-y-3 text-base">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Metadata Risk:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.metadata_analysis.metadata_risk ? 
+                                `${(analysisDetails.metadata_analysis.metadata_risk * 100).toFixed(1)}%` : '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Quality Score:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.metadata_analysis.quality_score ? 
+                                `${(analysisDetails.metadata_analysis.quality_score * 100).toFixed(1)}%` : '-'}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Suspicious Indicators:</span>
+                            <span className="text-foreground">
+                              {analysisDetails.metadata_analysis.suspicious_indicators?.length || 0} found
+                            </span>
+                          </div>
+                          {analysisDetails.metadata_analysis.suspicious_indicators && analysisDetails.metadata_analysis.suspicious_indicators.length > 0 && (
+                            <div className="space-y-2">
+                              <span className="text-sm text-muted-foreground">Indicators:</span>
+                              <ul className="text-sm text-foreground space-y-2">
+                                {analysisDetails.metadata_analysis.suspicious_indicators.slice(0, 3).map((indicator, index) => (
+                                  <li key={index} className="flex items-start gap-2">
+                                    <AlertTriangle className="w-4 h-4 text-warning mt-0.5 flex-shrink-0" />
+                                    <span>{indicator}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Analysis Timestamp */}
+                    {analysisDetails?.analysis_timestamp && (
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-5 h-5 text-primary" />
+                          <h4 className="font-medium text-foreground text-base">Analysis Information</h4>
+                        </div>
+                        <div className="text-base space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-muted-foreground">Analysis Time:</span>
+                            <span className="text-foreground">
+                              {new Date(analysisDetails.analysis_timestamp).toLocaleString()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </Card>
           </div>
         </div>
       </div>

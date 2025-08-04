@@ -8,7 +8,7 @@ authors = ["FraudGuard Team"]
 # Sui framework dependencies are automatically included
 
 [addresses]
-fraudguard = "0xa97d9b127b18afe9cc4c42f3fdab5c5044fa2c2aa2d2883049e009e0ea1cacf1"
+fraudguard = "0x98079b6bc9b00a531e5e0cbc14c086cfa87c6fa240d4ee8aa7b82ca9444149b8"
 
 [dev-dependencies]
 # The dev-dependencies section allows overriding dependencies for `--test` and

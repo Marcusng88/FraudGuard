@@ -59,6 +59,7 @@ class NFTResponse(BaseModel):
     confidence_score: float
     status: str
     created_at: datetime
+    analysis_details: Optional[Dict[str, Any]] = None
 
 class NFTDetailResponse(BaseModel):
     id: str
@@ -75,6 +76,7 @@ class NFTDetailResponse(BaseModel):
     reason: Optional[str]
     status: str
     created_at: datetime
+    analysis_details: Optional[Dict[str, Any]] = None
 
 class MarketplaceResponse(BaseModel):
     nfts: List[NFTResponse]
@@ -132,9 +134,13 @@ async def get_marketplace_nfts(
     """
     try:
         # Base query for NFTs with status 'minted' or 'active'
+        # For hackathon: show all NFTs including flagged ones
         query = db.query(NFT).filter(
             NFT.status.in_(["minted", "active"])
         )
+        
+        # Note: For production, you might want to filter out high-confidence fraud NFTs
+        # query = query.filter(NFT.is_fraud == False)
         
         # Apply filters
         if search:
@@ -175,7 +181,8 @@ async def get_marketplace_nfts(
                 is_fraud=nft.is_fraud,
                 confidence_score=nft.confidence_score,
                 status=nft.status,
-                created_at=nft.created_at
+                created_at=nft.created_at,
+                analysis_details=nft.analysis_details
             )
             nft_responses.append(nft_response)
         
@@ -221,7 +228,8 @@ async def get_nft_details(
             flag_type=nft.flag_type,
             reason=nft.reason,
             status=nft.status,
-            created_at=nft.created_at
+            created_at=nft.created_at,
+            analysis_details=nft.analysis_details
         )
         
     except HTTPException:
@@ -296,7 +304,8 @@ async def get_featured_nfts(
                 is_fraud=nft.is_fraud,
                 confidence_score=nft.confidence_score,
                 status=nft.status,
-                created_at=nft.created_at
+                created_at=nft.created_at,
+                analysis_details=nft.analysis_details
             )
             featured_nfts.append(nft_response)
         
@@ -437,7 +446,8 @@ async def get_recent_nfts(
                 is_fraud=is_fraud,
                 confidence_score=confidence_score,
                 status=nft.status,
-                created_at=nft.created_at
+                created_at=nft.created_at,
+                analysis_details=nft.analysis_details
             ))
         
         return nft_responses

@@ -41,15 +41,11 @@ async def upload_to_pinata(file: UploadFile = File(...)) -> Dict[str, Any]:
         
         # Check if Pinata credentials are configured
         if not PINATA_API_KEY or not PINATA_SECRET_KEY:
-            logger.warning("Pinata credentials not configured, using mock response")
-            # Return a mock response for development
-            mock_hash = f"mock-{hash(file.filename)}-{int(time.time())}"
-            return {
-                "success": True,
-                "ipfs_hash": mock_hash,
-                "image_url": f"{PINATA_GATEWAY_URL}/{mock_hash}",
-                "pinata_response": {"mock": True}
-            }
+            logger.error("Pinata credentials not configured")
+            raise HTTPException(
+                status_code=500, 
+                detail="Pinata API credentials not configured. Please set PINATA_API_KEY and PINATA_SECRET_API_KEY environment variables."
+            )
         
         # Read file content
         file_content = await file.read()

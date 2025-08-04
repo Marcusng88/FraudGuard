@@ -1,63 +1,35 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { DashboardHero } from '@/components/DashboardHero';
 import { FraudDetectionWidget } from '@/components/FraudDetectionWidget';
 import { FraudAlert } from '@/components/FraudAlert';
 import { NftCard } from '@/components/NftCard';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
-
-const mockNfts = [
-  {
-    id: '1',
-    title: 'Cyber Punk',
-    image: 'https://i.pinimg.com/736x/f5/71/b6/f571b6d34fca38fdf580f788a223a9be.jpg?w=400&h=400&fit=crop',
-    price: '2.5 SUI',
-    creator: 'CyberArtist',
-    threatLevel: 'safe' as const
-  },
-  {
-    id: '2',
-    title: 'Digital Dreams',
-    image: 'https://i.pinimg.com/736x/90/56/d3/9056d37cff0fcead7492b2a4fb4b01cf.jpg?w=400&h=400&fit=crop',
-    price: '1.8 SUI',
-    creator: 'PixelMaster',
-    threatLevel: 'warning' as const
-  },
-  {
-    id: '3',
-    title: 'Neon Genesis',
-    image: 'https://i.pinimg.com/1200x/25/5e/6a/255e6a9ce78282a79d736713a65c289b.jpg?w=400&h=400&fit=crop',
-    price: '3.2 SUI',
-    creator: 'NeonCreator',
-    flagged: true,
-    threatLevel: 'danger' as const
-  }
-];
-
-const mockAlerts = [
-  {
-    severity: 'critical' as const,
-    title: 'Plagiarism Detected',
-    description: 'NFT #3847 contains copyrighted content from verified artist "CyberVision"',
-    timestamp: '2 minutes ago',
-    nftId: '3847'
-  },
-  {
-    severity: 'high' as const,
-    title: 'Suspicious Activity',
-    description: 'Multiple accounts created from same IP attempting rapid NFT creation',
-    timestamp: '15 minutes ago'
-  },
-  {
-    severity: 'medium' as const,
-    title: 'Price Manipulation Alert',
-    description: 'Unusual bidding pattern detected on NFT #2156',
-    timestamp: '1 hour ago',
-    nftId: '2156'
-  }
-];
+import { getMarketplaceNFTs } from '@/lib/api';
+import { NFT } from '@/lib/api';
 
 const Index = () => {
+  const [nfts, setNfts] = useState<NFT[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const fetchNFTs = async () => {
+      try {
+        setLoading(true);
+        const response = await getMarketplaceNFTs(1, 6); // Get first 6 NFTs
+        setNfts(response.nfts);
+      } catch (err) {
+        setError('Failed to load NFTs');
+        console.error('Error fetching NFTs:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchNFTs();
+  }, []);
+
   return (
     <div className="min-h-screen bg-background relative">
       {/* Floating warning icon */}
@@ -80,19 +52,14 @@ const Index = () => {
           <FraudDetectionWidget />
         </section>
 
-        {/* Active Alerts */}
+        {/* Active Alerts - Removed mock data, can be replaced with real API call later */}
         <section>
           <div className="flex items-center gap-3 mb-6">
             <h2 className="text-2xl font-bold text-foreground">Active Alerts</h2>
             <div className="h-px bg-gradient-to-r from-destructive/50 to-transparent flex-1" />
           </div>
-          <div className="grid gap-4">
-            {mockAlerts.map((alert, index) => (
-              <FraudAlert
-                key={index}
-                {...alert}
-              />
-            ))}
+          <div className="text-center py-8 text-muted-foreground">
+            <p>No active alerts at the moment</p>
           </div>
         </section>
 
@@ -102,14 +69,31 @@ const Index = () => {
             <h2 className="text-2xl font-bold text-foreground">Protected Marketplace</h2>
             <div className="h-px bg-gradient-to-r from-accent/50 to-transparent flex-1" />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {mockNfts.map((nft) => (
-              <NftCard
-                key={nft.id}
-                {...nft}
-              />
-            ))}
-          </div>
+          
+          {loading ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {[...Array(6)].map((_, index) => (
+                <div key={index} className="h-80 bg-muted/20 rounded-lg animate-pulse" />
+              ))}
+            </div>
+          ) : error ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <p>{error}</p>
+            </div>
+          ) : nfts.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              <p>No NFTs available at the moment</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {nfts.map((nft) => (
+                <NftCard
+                  key={nft.id}
+                  nft={nft}
+                />
+              ))}
+            </div>
+          )}
         </section>
       </div>
     </div>

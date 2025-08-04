@@ -314,13 +314,7 @@ const Marketplace = () => {
               {filteredNFTs.map((nft) => (
                 <NftCard
                   key={nft.id}
-                  id={nft.id}
-                  title={nft.title}
-                  image={nft.image_url}
-                  price={`${nft.price} SUI`}
-                  creator={nft.wallet_address.slice(0, 8) + '...'}
-                  flagged={nft.is_fraud}
-                  threatLevel={nft.is_fraud ? 'danger' : (nft.confidence_score >= 0.8 ? 'safe' : 'warning')}
+                  nft={nft}
                 />
               ))}
             </div>

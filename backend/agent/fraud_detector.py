@@ -7,6 +7,9 @@ import logging
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 from datetime import datetime
+import os
+from dotenv import load_dotenv
+load_dotenv()
 
 try:
     from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
@@ -66,33 +69,60 @@ class UnifiedFraudDetector:
     async def initialize(self) -> bool:
         """Initialize all fraud detection components"""
         try:
+            logger.info("Initializing unified fraud detector...")
+            
             # Initialize Google Gemini LLM
             if ChatGoogleGenerativeAI and settings.google_api_key:
-                self.llm = ChatGoogleGenerativeAI(
-                    model="gemini-pro",
-                    temperature=0.1,
-                    google_api_key=settings.google_api_key
-                )
-                logger.info("Google Gemini LLM initialized")
+                try:
+                    self.llm = ChatGoogleGenerativeAI(
+                        model=settings.google_model or "gemini-1.5-pro-latest",
+                        temperature=0.1,
+                        google_api_key=settings.google_api_key
+                    )
+                    logger.info("Google Gemini LLM initialized successfully")
+                except Exception as llm_error:
+                    logger.warning(f"Failed to initialize Gemini LLM: {llm_error}")
+                    self.llm = None
             
-            # Initialize other components
-            self.gemini_analyzer = await get_gemini_analyzer()
-            self.supabase_client = await get_supabase_client()
-            self.sui_client = await get_sui_client()
+            # Initialize other components with better error handling
+            try:
+                self.gemini_analyzer = await get_gemini_analyzer()
+                if self.gemini_analyzer:
+                    await self.gemini_analyzer.initialize()
+                    logger.info("Gemini analyzer initialized successfully")
+                else:
+                    logger.warning("Gemini analyzer not available")
+            except Exception as analyzer_error:
+                logger.warning(f"Failed to initialize Gemini analyzer: {analyzer_error}")
+                self.gemini_analyzer = None
             
-            # Initialize components
-            if self.gemini_analyzer:
-                await self.gemini_analyzer.initialize()
+            try:
+                self.supabase_client = await get_supabase_client()
+                if self.supabase_client:
+                    await self.supabase_client.initialize()
+                    logger.info("Supabase client initialized successfully")
+                else:
+                    logger.warning("Supabase client not available")
+            except Exception as supabase_error:
+                logger.warning(f"Failed to initialize Supabase client: {supabase_error}")
+                self.supabase_client = None
             
-            if self.supabase_client:
-                await self.supabase_client.initialize()
+            try:
+                self.sui_client = await get_sui_client()
+                logger.info("Sui client initialized successfully")
+            except Exception as sui_error:
+                logger.warning(f"Failed to initialize Sui client: {sui_error}")
+                self.sui_client = None
             
+            # Mark as initialized even if some components failed
             self.initialized = True
-            logger.info("Unified fraud detector initialized successfully")
+            logger.info("Unified fraud detector initialization completed")
             return True
             
         except Exception as e:
             logger.error(f"Failed to initialize fraud detector: {e}")
+            # Still mark as initialized to allow fallback analysis
+            self.initialized = True
             return False
     
     async def analyze_nft_for_fraud(self, nft_data: NFTData) -> Dict[str, Any]:
@@ -125,14 +155,31 @@ class UnifiedFraudDetector:
                 nft_data, image_analysis, similarity_results, metadata_analysis
             )
             
-            # Prepare comprehensive result
+            # Prepare comprehensive result with detailed image analysis
             result = {
                 "is_fraud": fraud_decision.get("is_fraud", False),
                 "confidence_score": fraud_decision.get("confidence_score", 0.0),
                 "flag_type": fraud_decision.get("flag_type"),
                 "reason": fraud_decision.get("reason", "Analysis completed"),
                 "analysis_details": {
-                    "image_analysis": image_analysis,
+                    "image_analysis": {
+                        "description": image_analysis.get("description", ""),
+                        "artistic_style": image_analysis.get("artistic_style", ""),
+                        "quality_assessment": image_analysis.get("quality_assessment", ""),
+                        "fraud_indicators": image_analysis.get("fraud_indicators", {}),
+                        "overall_fraud_score": image_analysis.get("overall_fraud_score", 0.0),
+                        "risk_level": image_analysis.get("risk_level", "unknown"),
+                        "key_visual_elements": image_analysis.get("key_visual_elements", []),
+                        "color_palette": image_analysis.get("color_palette", []),
+                        "composition_analysis": image_analysis.get("composition_analysis", ""),
+                        "uniqueness_score": image_analysis.get("uniqueness_score", 0.0),
+                        "artistic_merit": image_analysis.get("artistic_merit", ""),
+                        "technical_quality": image_analysis.get("technical_quality", ""),
+                        "market_value_assessment": image_analysis.get("market_value_assessment", ""),
+                        "recommendation": image_analysis.get("recommendation", ""),
+                        "confidence_in_analysis": image_analysis.get("confidence_in_analysis", 0.0),
+                        "additional_notes": image_analysis.get("additional_notes", "")
+                    },
                     "similarity_results": similarity_results,
                     "metadata_analysis": metadata_analysis,
                     "llm_decision": fraud_decision,
@@ -150,7 +197,31 @@ class UnifiedFraudDetector:
                 "confidence_score": 0.0,
                 "flag_type": None,
                 "reason": f"Analysis error: {str(e)}",
-                "analysis_details": {"error": str(e)}
+                "analysis_details": {
+                    "image_analysis": {
+                        "description": f"Error analyzing image: {str(e)}",
+                        "artistic_style": "unknown",
+                        "quality_assessment": "Analysis failed",
+                        "fraud_indicators": {},
+                        "overall_fraud_score": 0.0,
+                        "risk_level": "unknown",
+                        "key_visual_elements": [],
+                        "color_palette": [],
+                        "composition_analysis": "Analysis failed",
+                        "uniqueness_score": 0.0,
+                        "artistic_merit": "Analysis failed",
+                        "technical_quality": "Analysis failed",
+                        "market_value_assessment": "Analysis failed",
+                        "recommendation": "Manual review required",
+                        "confidence_in_analysis": 0.0,
+                        "additional_notes": f"Error: {str(e)}"
+                    },
+                    "similarity_results": {"error": str(e)},
+                    "metadata_analysis": {"error": str(e)},
+                    "llm_decision": {"error": str(e)},
+                    "analysis_timestamp": datetime.now().isoformat(),
+                    "error": str(e)
+                }
             }
     
     async def _analyze_image_with_gemini(self, nft_data: NFTData) -> Dict[str, Any]:
@@ -263,17 +334,54 @@ class UnifiedFraudDetector:
             
             try:
                 import json
-                metadata_analysis = json.loads(response.content)
-            except:
+                
+                # Clean and extract JSON from response
+                response_text = response.content.strip()
+                
+                # If response is empty or contains only whitespace
+                if not response_text:
+                    logger.warning("LLM returned empty response for metadata analysis")
+                    return {
+                        "quality_score": 0.5,
+                        "suspicious_indicators": ["Empty LLM response"],
+                        "metadata_risk": 0.2,
+                        "analysis": "Fallback analysis used due to empty response"
+                    }
+                
+                # Try to extract JSON from markdown code blocks if present
+                if "```json" in response_text:
+                    json_start = response_text.find("```json") + 7
+                    json_end = response_text.find("```", json_start)
+                    if json_end != -1:
+                        response_text = response_text[json_start:json_end].strip()
+                elif "```" in response_text:
+                    json_start = response_text.find("```") + 3
+                    json_end = response_text.find("```", json_start)
+                    if json_end != -1:
+                        response_text = response_text[json_start:json_end].strip()
+                
+                metadata_analysis = json.loads(response_text)
+                
+                # Validate the response
+                if not isinstance(metadata_analysis.get("quality_score"), (int, float)):
+                    metadata_analysis["quality_score"] = 0.5
+                if not isinstance(metadata_analysis.get("metadata_risk"), (int, float)):
+                    metadata_analysis["metadata_risk"] = 0.1
+                if not isinstance(metadata_analysis.get("suspicious_indicators"), list):
+                    metadata_analysis["suspicious_indicators"] = []
+                
+                return metadata_analysis
+                
+            except Exception as parse_error:
+                logger.warning(f"Failed to parse LLM metadata response: {parse_error}")
+                logger.warning(f"Raw metadata response: {response.content[:200] if hasattr(response, 'content') else 'No content'}")
                 # Fallback if JSON parsing fails
-                metadata_analysis = {
+                return {
                     "quality_score": 0.5,
                     "suspicious_indicators": ["LLM response parsing failed"],
                     "metadata_risk": 0.2,
-                    "analysis": "Fallback analysis used"
+                    "analysis": "Fallback analysis used due to parsing error"
                 }
-            
-            return metadata_analysis
             
         except Exception as e:
             logger.error(f"Error in metadata analysis: {e}")
@@ -354,29 +462,57 @@ class UnifiedFraudDetector:
             """
             
             response = await self.llm.ainvoke(decision_prompt)
-            
+            logger.info(f"llm response{response.content}")
             try:
                 import json
-                fraud_decision = json.loads(response.content)
                 
-                # Validate the response
+                # Clean and extract JSON from response
+                response_text = response.content.strip()
+                logger.info(f"LLM raw response: {response_text[:500]}...")  # Log first 500 chars
+                
+                # If response is empty or contains only whitespace
+                if not response_text:
+                    logger.warning("LLM returned empty response")
+                    return self._get_safe_fallback_decision(nft_data, image_analysis, similarity_results, metadata_analysis)
+                
+                # Try to extract JSON from markdown code blocks if present
+                if "```json" in response_text:
+                    json_start = response_text.find("```json") + 7
+                    json_end = response_text.find("```", json_start)
+                    if json_end != -1:
+                        response_text = response_text[json_start:json_end].strip()
+                elif "```" in response_text:
+                    json_start = response_text.find("```") + 3
+                    json_end = response_text.find("```", json_start)
+                    if json_end != -1:
+                        response_text = response_text[json_start:json_end].strip()
+                
+                fraud_decision = json.loads(response_text)
+                
+                # Validate the response and ensure logical consistency
                 if not isinstance(fraud_decision.get("is_fraud"), bool):
                     fraud_decision["is_fraud"] = False
                 if not isinstance(fraud_decision.get("confidence_score"), (int, float)):
                     fraud_decision["confidence_score"] = 0.0
                 
+                # Fix logical inconsistency: if confidence is high and recommendation is FLAG, is_fraud should be true
+                confidence_score = fraud_decision.get("confidence_score", 0.0)
+                recommendation = fraud_decision.get("recommendation", "").upper()
+                
+                if confidence_score >= 0.7 and recommendation in ["FLAG", "BLOCK"]:
+                    fraud_decision["is_fraud"] = True
+                    logger.info(f"Fixed logical inconsistency: confidence={confidence_score}, recommendation={recommendation} -> is_fraud=True")
+                elif confidence_score < 0.3 and recommendation == "ALLOW":
+                    fraud_decision["is_fraud"] = False
+                    logger.info(f"Fixed logical inconsistency: confidence={confidence_score}, recommendation={recommendation} -> is_fraud=False")
+                
                 return fraud_decision
                 
             except Exception as parse_error:
                 logger.warning(f"Failed to parse LLM decision: {parse_error}")
-                # Fallback decision
-                return {
-                    "is_fraud": False,
-                    "confidence_score": 0.1,
-                    "flag_type": None,
-                    "reason": f"LLM decision parsing failed: {parse_error}",
-                    "recommendation": "MANUAL_REVIEW"
-                }
+                logger.warning(f"Raw response: {response.content[:200] if hasattr(response, 'content') else 'No content'}")
+                # Use intelligent fallback decision
+                return self._get_safe_fallback_decision(nft_data, image_analysis, similarity_results, metadata_analysis)
             
         except Exception as e:
             logger.error(f"Error in LLM fraud decision: {e}")
@@ -387,6 +523,39 @@ class UnifiedFraudDetector:
                 "reason": f"Decision analysis error: {str(e)}",
                 "error": str(e)
             }
+
+    def _get_safe_fallback_decision(self, nft_data: NFTData, image_analysis: Dict, similarity_results: Dict, metadata_analysis: Dict) -> Dict[str, Any]:
+        """Generate a safe fallback decision when LLM parsing fails"""
+        # Use combined heuristic approach
+        image_risk = image_analysis.get("overall_fraud_score", 0.0) if image_analysis else 0.0
+        similarity_risk = similarity_results.get("max_similarity", 0.0) if similarity_results else 0.0
+        metadata_risk = metadata_analysis.get("metadata_risk", 0.0) if metadata_analysis else 0.0
+        
+        # Weight the different factors
+        combined_risk = (image_risk * 0.5) + (similarity_risk * 0.3) + (metadata_risk * 0.2)
+        
+        # Conservative approach - only flag if multiple indicators
+        is_fraud = combined_risk > 0.7
+        confidence_score = min(combined_risk, 0.8)  # Cap confidence since we're using fallback
+        
+        flag_type = None
+        if combined_risk > 0.8:
+            flag_type = 1  # High risk
+        elif combined_risk > 0.6:
+            flag_type = 2  # Medium risk
+        
+        reason = f"Fallback analysis (LLM unavailable) - Combined risk: {combined_risk:.2f}"
+        if similarity_results.get("is_duplicate"):
+            reason += " - Potential duplicate detected"
+        
+        return {
+            "is_fraud": is_fraud,
+            "confidence_score": confidence_score,
+            "flag_type": flag_type,
+            "reason": reason,
+            "recommendation": "MANUAL_REVIEW" if combined_risk > 0.5 else "ALLOW",
+            "fallback_used": True
+        }
 
 
 # Global fraud detector instance
@@ -432,13 +601,37 @@ async def analyze_nft_for_fraud(nft_data: NFTData) -> Dict[str, Any]:
 
     except Exception as e:
         logger.error(f"Error in unified fraud analysis: {e}")
-        # Return safe default values on error
+        # Return safe default values on error with proper image analysis structure
         return {
             "is_fraud": False,
             "confidence_score": 0.0,
             "flag_type": None,
             "reason": f"Analysis error: {str(e)}",
-            "analysis_details": {"error": str(e)}
+            "analysis_details": {
+                "image_analysis": {
+                    "description": f"Error in unified analysis: {str(e)}",
+                    "artistic_style": "unknown",
+                    "quality_assessment": "Analysis failed",
+                    "fraud_indicators": {},
+                    "overall_fraud_score": 0.0,
+                    "risk_level": "unknown",
+                    "key_visual_elements": [],
+                    "color_palette": [],
+                    "composition_analysis": "Analysis failed",
+                    "uniqueness_score": 0.0,
+                    "artistic_merit": "Analysis failed",
+                    "technical_quality": "Analysis failed",
+                    "market_value_assessment": "Analysis failed",
+                    "recommendation": "Manual review required",
+                    "confidence_in_analysis": 0.0,
+                    "additional_notes": f"Unified analysis error: {str(e)}"
+                },
+                "similarity_results": {"error": str(e)},
+                "metadata_analysis": {"error": str(e)},
+                "llm_decision": {"error": str(e)},
+                "analysis_timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            }
         }
 
 
@@ -477,6 +670,50 @@ def _fallback_fraud_analysis(nft_data: NFTData) -> Dict[str, Any]:
         "flag_type": flag_type,
         "reason": reason,
         "analysis_details": {
+            "image_analysis": {
+                "description": f"Fallback analysis for {nft_data.title} - detailed image analysis not available",
+                "artistic_style": "unknown",
+                "quality_assessment": "Basic analysis only",
+                "fraud_indicators": {
+                    "low_effort_generation": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
+                    "stolen_artwork": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
+                    "ai_generated": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
+                    "template_usage": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
+                    "metadata_mismatch": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"}
+                },
+                "overall_fraud_score": confidence_score,
+                "risk_level": "low" if confidence_score < 0.3 else "medium" if confidence_score < 0.7 else "high",
+                "key_visual_elements": ["fallback analysis"],
+                "color_palette": ["unknown"],
+                "composition_analysis": "Fallback analysis - detailed analysis not available",
+                "uniqueness_score": 0.5,
+                "artistic_merit": "Fallback analysis",
+                "technical_quality": "Fallback analysis",
+                "market_value_assessment": "Fallback analysis",
+                "recommendation": "Manual review recommended",
+                "confidence_in_analysis": 0.1,
+                "additional_notes": "Using fallback analysis - AI agent recommended for production"
+            },
+            "similarity_results": {
+                "similar_nfts": [],
+                "max_similarity": 0.0,
+                "is_duplicate": False,
+                "similarity_count": 0
+            },
+            "metadata_analysis": {
+                "quality_score": 0.5,
+                "suspicious_indicators": fraud_keywords if is_fraud else [],
+                "metadata_risk": confidence_score,
+                "analysis": "Fallback metadata analysis"
+            },
+            "llm_decision": {
+                "is_fraud": is_fraud,
+                "confidence_score": confidence_score,
+                "flag_type": flag_type,
+                "reason": reason,
+                "recommendation": "MANUAL_REVIEW" if confidence_score > 0.3 else "ALLOW"
+            },
+            "analysis_timestamp": datetime.now().isoformat(),
             "fallback_analysis": True,
             "keywords_checked": fraud_keywords,
             "price": nft_data.price

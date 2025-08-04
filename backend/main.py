@@ -53,36 +53,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Pydantic models for API
-class NFTAnalysisRequest(BaseModel):
-    """Request model for NFT analysis"""
-    nft_id: str
-    force_reanalysis: bool = False
-
-
-class NFTAnalysisResponse(BaseModel):
-    """Response model for NFT analysis"""
-    nft_id: str
-    is_fraud: bool
-    confidence_score: float
-    flag_type: int
-    reason: str
-    analysis_timestamp: str
-    details: Dict
-
-
-class FraudFlagResponse(BaseModel):
-    """Response model for fraud flags"""
-    flag_id: str
-    nft_id: str
-    flag_type: int
-    confidence_score: int
-    reason: str
-    flagged_by: str
-    flagged_at: int
-    is_active: bool
-
-
+# Health check response model
 class HealthResponse(BaseModel):
     """Health check response"""
     status: str
@@ -183,7 +154,7 @@ if app:
     async def health_check():
         """Health check endpoint"""
         try:
-            # Check Sui connection
+            # Check Sui connection (interface only)
             sui_connected = await sui_client.initialize() if sui_client else False
 
             return HealthResponse(
@@ -196,98 +167,6 @@ if app:
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             raise HTTPException(status_code=500, detail="Health check failed")
-
-    @app.post("/analyze-nft", response_model=NFTAnalysisResponse)
-    async def analyze_nft(request: NFTAnalysisRequest):
-        """Analyze an NFT for fraud indicators using AI"""
-        try:
-            logger.info(f"Analyzing NFT: {request.nft_id}")
-
-            # Get NFT data from blockchain
-            nft_data = await sui_client.get_nft_data(request.nft_id)
-            if not nft_data:
-                raise HTTPException(status_code=404, detail="NFT not found")
-
-            # Convert to NFTData format for analysis
-            nft_analysis_data = NFTData(
-                title=nft_data.get("name", "Unknown"),
-                description=nft_data.get("description", ""),
-                image_url=nft_data.get("image_url", ""),
-                category=nft_data.get("category", "art"),
-                price=float(nft_data.get("price", 0))
-            )
-
-            # Perform AI-powered fraud analysis
-            fraud_result = await analyze_nft_for_fraud(nft_analysis_data)
-
-            return NFTAnalysisResponse(
-                nft_id=request.nft_id,
-                is_fraud=fraud_result.get("is_fraud", False),
-                confidence_score=fraud_result.get("confidence_score", 0.0),
-                flag_type=fraud_result.get("flag_type", 0),
-                reason=fraud_result.get("reason", "Analysis completed"),
-                analysis_timestamp=str(asyncio.get_event_loop().time()),
-                details=fraud_result.get("analysis_details", {})
-            )
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error analyzing NFT {request.nft_id}: {e}")
-            raise HTTPException(status_code=500, detail="Analysis failed")
-
-    @app.get("/nft/{nft_id}/fraud-flags", response_model=List[FraudFlagResponse])
-    async def get_fraud_flags(nft_id: str):
-        """Get fraud flags for an NFT"""
-        try:
-            flags = await sui_client.get_fraud_flags_for_nft(nft_id)
-
-            return [
-                FraudFlagResponse(
-                    flag_id=flag.flag_id,
-                    nft_id=flag.nft_id,
-                    flag_type=flag.flag_type,
-                    confidence_score=flag.confidence_score,
-                    reason=flag.reason,
-                    flagged_by=flag.flagged_by,
-                    flagged_at=flag.flagged_at,
-                    is_active=flag.is_active
-                )
-                for flag in flags
-            ]
-
-        except Exception as e:
-            logger.error(f"Error getting fraud flags for NFT {nft_id}: {e}")
-            raise HTTPException(status_code=500, detail="Failed to get fraud flags")
-
-    @app.post("/create-fraud-flag")
-    async def create_fraud_flag(
-        nft_id: str,
-        flag_type: int,
-        confidence_score: int,
-        reason: str,
-        background_tasks
-    ):
-        """Manually create a fraud flag (admin only)"""
-        try:
-            # This would typically require admin authentication
-            flag_id = await sui_client.create_fraud_flag(
-                nft_id=nft_id,
-                flag_type=flag_type,
-                confidence_score=confidence_score,
-                reason=reason
-            )
-
-            if flag_id:
-                return {"flag_id": flag_id, "status": "created"}
-            else:
-                raise HTTPException(status_code=500, detail="Failed to create fraud flag")
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error creating fraud flag: {e}")
-            raise HTTPException(status_code=500, detail="Failed to create fraud flag")
 
 
 # Development server
