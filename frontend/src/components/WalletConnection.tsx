@@ -33,20 +33,18 @@ export function WalletConnection() {
     setShowSlushAuth(true);
   };
 
-  // If already connected, redirect to marketplace ONLY if on home page
+  // Always show hacker animation first, then handle authentication
   useEffect(() => {
     console.log('WalletConnection Debug:', { account: !!account, isAuthenticated, isRedirecting, pathname: location.pathname });
     
-    if (account && isAuthenticated && !isRedirecting && location.pathname === '/') {
-      console.log('Redirecting to marketplace from home page...');
-      setIsRedirecting(true);
-      // Add a longer delay to ensure the connection and auth state are fully established
+    // If already authenticated, show Slush auth after a short delay
+    if (account && isAuthenticated && !showSlushAuth && location.pathname === '/') {
+      console.log('User already authenticated, showing Slush auth...');
       setTimeout(() => {
-        console.log('Executing navigation to marketplace');
-        navigate('/marketplace', { replace: true });
-      }, 1500);
+        setShowSlushAuth(true);
+      }, 1000); // Show Slush auth after 1 second
     }
-  }, [account, isAuthenticated, isRedirecting, navigate, location.pathname]);
+  }, [account, isAuthenticated, showSlushAuth, location.pathname]);
 
   // If already authenticated and not on home page, don't render anything
   if (account && isAuthenticated && location.pathname !== '/') {
