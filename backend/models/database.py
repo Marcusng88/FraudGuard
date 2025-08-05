@@ -6,8 +6,17 @@ import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Text, Boolean, Integer, DateTime, ForeignKey, Float
 from sqlalchemy.types import DECIMAL
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.ext.declarative import declarative_base
+
+# Import pgvector for vector support
+try:
+    import pgvector.sqlalchemy
+    from pgvector.sqlalchemy import Vector
+except ImportError:
+    # Fallback if pgvector is not installed
+    print("Warning: pgvector is not installed. Vector functionality will be limited.")
+    Vector = Text
 
 # Create the declarative base
 Base = declarative_base()
@@ -36,13 +45,13 @@ class NFT(Base):
     price = Column(DECIMAL(18, 8), nullable=False)
     image_url = Column(Text, nullable=False)
     sui_object_id = Column(Text, unique=True)
-    embedding_vector = Column(Text)  # This would be vector type in production
+    embedding_vector = Column(Vector(768))  # pgvector vector type for embeddings
     is_fraud = Column(Boolean, default=False)
     confidence_score = Column(Float, default=0.0)
     flag_type = Column(Integer)
     reason = Column(Text)
     evidence_url = Column(Text)
-    analysis_details = Column(Text)  # This would be JSONB in production
+    analysis_details = Column(JSON)  # JSONB type for analysis details
     status = Column(Text, default="pending")
     created_at = Column(DateTime, default=datetime.utcnow)
 

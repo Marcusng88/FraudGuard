@@ -30,7 +30,7 @@ import {
   XCircle,
   Star
 } from 'lucide-react';
-import { useNFTDetails } from '@/hooks/useMarketplace';
+import { useNFTDetails, useNFTAnalysisDetails, useSimilarNFTs } from '@/hooks/useMarketplace';
 import { AnalysisDetails } from '@/lib/api';
 
 const threatConfig = {
@@ -64,14 +64,18 @@ const NFTDetail = () => {
   const { nftId } = useParams<{ nftId: string }>();
   const navigate = useNavigate();
   const { data: nftData, isLoading, error } = useNFTDetails(nftId);
+  const { data: analysisData, isLoading: analysisLoading } = useNFTAnalysisDetails(nftId);
+  const { data: similarNFTsData, isLoading: similarLoading } = useSimilarNFTs(nftId);
 
-  if (isLoading) {
+  if (isLoading || analysisLoading || similarLoading) {
     return (
       <div className="min-h-screen bg-background">
         <CyberNavigation />
         <div className="flex items-center justify-center min-h-[50vh]">
           <Loader2 className="w-8 h-8 animate-spin text-primary" />
-          <span className="ml-2 text-muted-foreground">Loading NFT details...</span>
+          <span className="ml-2 text-muted-foreground">
+            {isLoading ? 'Loading NFT details...' : analysisLoading ? 'Loading analysis details...' : 'Loading similar NFTs...'}
+          </span>
         </div>
       </div>
     );
@@ -99,8 +103,11 @@ const NFTDetail = () => {
   const nft = nftData.nft;
   const owner = nftData.owner;
   
-  // Determine threat level based on fraud status and confidence
-  const threatLevel = nft.is_fraud ? 'danger' : (nft.confidence_score >= 0.8 ? 'safe' : 'warning');
+  // Determine threat level based on fraud detection results
+  // Use analysis data if available, otherwise fall back to NFT data
+  const isFraud = analysisData?.is_fraud ?? nft.is_fraud;
+  const confidenceScore = analysisData?.confidence_score ?? nft.confidence_score;
+  const threatLevel = isFraud ? 'danger' : (confidenceScore >= 0.8 ? 'safe' : 'warning');
   const config = threatConfig[threatLevel];
   const Icon = config.icon;
 
@@ -112,6 +119,34 @@ const NFTDetail = () => {
     return String(value);
   };
 
+  // Helper function to check if data is empty and return appropriate message
+  const isEmptyData = (value: any): boolean => {
+    if (value === null || value === undefined || value === '') return true;
+    if (Array.isArray(value) && value.length === 0) return true;
+    if (typeof value === 'object' && Object.keys(value).length === 0) return true;
+    return false;
+  };
+
+  // Helper function to get empty state message
+  const getEmptyStateMessage = (section: string): string => {
+    switch (section) {
+      case 'similar_nfts':
+        return 'No similar NFTs found';
+      case 'analysis':
+        return 'Analysis data not available';
+      case 'fraud_indicators':
+        return 'No fraud indicators detected';
+      case 'image_analysis':
+        return 'Image analysis not available';
+      case 'metadata_analysis':
+        return 'Metadata analysis not available';
+      case 'similarity_results':
+        return 'Similarity check not performed';
+      default:
+        return 'No data available';
+    }
+  };
+
   // Helper function to format confidence score
   const formatConfidence = (score: number | null | undefined) => {
     if (score === null || score === undefined) return '-';
@@ -120,15 +155,15 @@ const NFTDetail = () => {
 
   // Helper function to extract analysis details
   const getAnalysisDetails = (): AnalysisDetails | null => {
-    if (!nft.analysis_details) return null;
+    if (!analysisData?.analysis_details) return null;
     
     try {
       // If it's a string, parse it as JSON
-      if (typeof nft.analysis_details === 'string') {
-        return JSON.parse(nft.analysis_details) as AnalysisDetails;
+      if (typeof analysisData.analysis_details === 'string') {
+        return JSON.parse(analysisData.analysis_details) as AnalysisDetails;
       }
       // If it's already an object, return it
-      return nft.analysis_details as AnalysisDetails;
+      return analysisData.analysis_details as AnalysisDetails;
     } catch (error) {
       console.error('Error parsing analysis details:', error);
       return null;
@@ -189,7 +224,7 @@ const NFTDetail = () => {
                   <div className="flex items-center gap-1">
                     <Star className="w-3 h-3 text-primary" />
                     <span className="text-xs font-medium text-primary">
-                      {formatConfidence(nft.confidence_score)}
+                      {formatConfidence(confidenceScore)}
                     </span>
                   </div>
                 </div>
@@ -199,12 +234,12 @@ const NFTDetail = () => {
             {/* Quick Stats */}
             <div className="mt-6 grid grid-cols-2 gap-4">
               <Card className="glass-panel p-4 text-center">
-                <div className="text-2xl font-bold text-primary">{formatConfidence(nft.confidence_score)}</div>
+                <div className="text-2xl font-bold text-primary">{formatConfidence(confidenceScore)}</div>
                 <div className="text-xs text-muted-foreground">Confidence</div>
               </Card>
               <Card className="glass-panel p-4 text-center">
                 <div className="text-2xl font-bold text-secondary">
-                  {nft.is_fraud ? 'FLAGGED' : 'SAFE'}
+                  {isFraud ? 'FLAGGED' : 'SAFE'}
                 </div>
                 <div className="text-xs text-muted-foreground">Status</div>
               </Card>
@@ -365,6 +400,63 @@ const NFTDetail = () => {
                     </p>
                   </div>
                 </div>
+              </Card>
+            </div>
+
+            {/* Similar NFTs */}
+            <div className="space-y-4">
+              <h3 className="font-semibold text-foreground">Similar NFTs</h3>
+              <Card className="glass-panel p-4">
+                {similarNFTsData && similarNFTsData.similar_nfts && similarNFTsData.similar_nfts.length > 0 ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Search className="w-5 h-5 text-primary" />
+                      <span className="text-sm text-muted-foreground">
+                        Found {similarNFTsData.total} similar NFTs
+                      </span>
+                    </div>
+                    <div className="space-y-3 max-h-60 overflow-y-auto">
+                      {similarNFTsData.similar_nfts.map((similarNft, index) => (
+                        <div key={index} className="flex items-center gap-3 p-3 bg-muted/30 rounded-lg hover:bg-muted/50 transition-colors">
+                          <div className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0">
+                            <img 
+                              src={similarNft.image_url} 
+                              alt={similarNft.title}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                e.currentTarget.src = 'https://via.placeholder.com/64x64?text=NFT';
+                              }}
+                            />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className="font-medium text-foreground truncate">
+                              {similarNft.title}
+                            </p>
+                            <p className="text-sm text-muted-foreground truncate">
+                              Creator: {similarNft.wallet_address ? 
+                                `${similarNft.wallet_address.slice(0, 6)}...${similarNft.wallet_address.slice(-4)}` : 
+                                '-'}
+                            </p>
+                          </div>
+                          <div className="text-right">
+                            <Badge variant="outline" className="text-xs">
+                              {(similarNft.similarity * 100).toFixed(1)}%
+                            </Badge>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center py-8">
+                    <div className="text-center">
+                      <Search className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
+                      <p className="text-sm text-muted-foreground">
+                        {getEmptyStateMessage('similar_nfts')}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </Card>
             </div>
           </div>
@@ -591,6 +683,67 @@ const NFTDetail = () => {
                               {analysisDetails.similarity_results.similar_nfts?.length || 0} found
                             </span>
                           </div>
+                          
+                          {/* Display Similar NFTs */}
+                          {analysisDetails.similarity_results.similar_nfts && analysisDetails.similarity_results.similar_nfts.length > 0 && (
+                            <div className="space-y-3">
+                              <span className="text-sm text-muted-foreground">Similar NFTs Found:</span>
+                              <div className="space-y-2 max-h-40 overflow-y-auto">
+                                {analysisDetails.similarity_results.similar_nfts.slice(0, 5).map((similarNft, index) => (
+                                  <div key={index} className="flex items-center gap-3 p-2 bg-muted/30 rounded-lg">
+                                    <div className="w-12 h-12 rounded-lg overflow-hidden flex-shrink-0">
+                                      <img 
+                                        src={similarNft.metadata?.image_url || 'https://via.placeholder.com/48x48?text=NFT'} 
+                                        alt={similarNft.metadata?.name || 'Similar NFT'}
+                                        className="w-full h-full object-cover"
+                                        onError={(e) => {
+                                          e.currentTarget.src = 'https://via.placeholder.com/48x48?text=NFT';
+                                        }}
+                                      />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-foreground truncate">
+                                        {similarNft.metadata?.name || 'Unknown NFT'}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground truncate">
+                                        Creator: {similarNft.metadata?.creator ? 
+                                          `${similarNft.metadata.creator.slice(0, 6)}...${similarNft.metadata.creator.slice(-4)}` : 
+                                          'Unknown'}
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <Badge variant="outline" className="text-xs">
+                                        {(similarNft.similarity * 100).toFixed(1)}%
+                                      </Badge>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Display Evidence URLs */}
+                          {analysisDetails.similarity_results.evidence_urls && analysisDetails.similarity_results.evidence_urls.length > 0 && (
+                            <div className="space-y-3">
+                              <span className="text-sm text-muted-foreground">Evidence URLs:</span>
+                              <div className="space-y-2 max-h-32 overflow-y-auto">
+                                {analysisDetails.similarity_results.evidence_urls.slice(0, 3).map((url, index) => (
+                                  <div key={index} className="flex items-center gap-2 p-2 bg-muted/30 rounded-lg">
+                                    <Image className="w-4 h-4 text-primary flex-shrink-0" />
+                                    <a 
+                                      href={url} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="text-xs text-primary hover:underline truncate"
+                                    >
+                                      {url}
+                                    </a>
+                                    <ExternalLink className="w-3 h-3 text-muted-foreground flex-shrink-0" />
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}

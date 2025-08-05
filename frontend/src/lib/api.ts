@@ -25,9 +25,8 @@ export interface NFT {
   confidence_score: number;
   flag_type?: number;
   reason?: string;
-  analysis_details?: AnalysisDetails; // Full LLM analysis details from Supabase
   embedding_vector?: number[]; // Vector embedding for similarity search
-  evidence_url?: string;
+  evidence_url?: string; // JSON string containing array of evidence URLs
   status: string;
   created_at: string;
 }
@@ -69,8 +68,18 @@ export interface AnalysisDetails {
   analysis_timestamp?: string;
   similarity_results?: {
     is_duplicate?: boolean;
-    similar_nfts?: unknown[];
+    similar_nfts?: Array<{
+      nft_id: string;
+      metadata: {
+        name: string;
+        creator: string;
+        image_url: string;
+      };
+      similarity: number;
+    }>;
     max_similarity?: number;
+    similarity_count?: number;
+    evidence_urls?: string[];
   };
 }
 
@@ -170,6 +179,48 @@ export async function getNFTDetails(nftId: string): Promise<NFTDetailResponse> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to fetch NFT details');
+  }
+
+  return response.json();
+}
+
+export async function getNFTAnalysisDetails(nftId: string): Promise<{
+  nft_id: string;
+  analysis_details: AnalysisDetails;
+  is_fraud: boolean;
+  confidence_score: number;
+  flag_type?: number;
+  reason?: string;
+  status: string;
+  analyzed_at?: string;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/${nftId}/analysis`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch NFT analysis details');
+  }
+
+  return response.json();
+}
+
+export async function getSimilarNFTs(nftId: string, limit: number = 5): Promise<{
+  similar_nfts: Array<{
+    nft_id: string;
+    title: string;
+    image_url: string;
+    wallet_address: string;
+    similarity: number;
+  }>;
+  total: number;
+  target_nft_id: string;
+  target_nft_title: string;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/${nftId}/similar?limit=${limit}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch similar NFTs');
   }
 
   return response.json();

@@ -10,12 +10,12 @@ from datetime import datetime
 try:
     from core.config import settings
     from agent.sui_client import sui_client, NFTData
-    from agent.fraud_detector import analyze_nft_for_fraud
+    from agent.fraud_detector import analyze_nft_for_fraud, NFTData as FraudDetectorNFTData
     from agent.supabase_client import supabase_client
 except ImportError:
     from backend.core.config import settings
     from backend.agent.sui_client import sui_client, NFTData
-    from backend.agent.fraud_detector import analyze_nft_for_fraud
+    from backend.agent.fraud_detector import analyze_nft_for_fraud, NFTData as FraudDetectorNFTData
     from backend.agent.supabase_client import supabase_client
 
 logger = logging.getLogger(__name__)
@@ -77,20 +77,29 @@ class SuiEventListener:
                 logger.warning(f"Could not retrieve NFT data for {nft_id}")
                 return
 
+            # Convert NFTData from sui_client format to fraud_detector format
+            fraud_detector_nft_data = FraudDetectorNFTData(
+                title=nft_data.name,
+                description=nft_data.description,
+                image_url=nft_data.image_url,
+                category=nft_data.collection,
+                price=0.0  # Default price since it's not in the sui_client NFTData
+            )
+
             # Perform fraud analysis
             logger.info(f"Starting fraud analysis for NFT {nft_id}")
-            fraud_result = await analyze_nft_for_fraud(nft_data)
+            fraud_result = await analyze_nft_for_fraud(fraud_detector_nft_data)
 
             # If fraud detected, create flag on blockchain
-            if fraud_result.is_fraud:
-                logger.warning(f"Fraud detected for NFT {nft_id}: {fraud_result.reason}")
+            if fraud_result.get("is_fraud", False):
+                logger.warning(f"Fraud detected for NFT {nft_id}: {fraud_result.get('reason', 'Unknown reason')}")
 
                 flag_id = await sui_client.create_fraud_flag(
                     nft_id=nft_id,
-                    flag_type=fraud_result.flag_type,
-                    confidence_score=int(fraud_result.confidence_score * 100),
-                    reason=fraud_result.reason,
-                    evidence_url=fraud_result.evidence_url
+                    flag_type=fraud_result.get("flag_type"),
+                    confidence_score=int(fraud_result.get("confidence_score", 0.0) * 100),
+                    reason=fraud_result.get("reason", "Fraud detected"),
+                    evidence_url=fraud_result.get("evidence_url", "")
                 )
 
                 if flag_id:
@@ -118,15 +127,15 @@ class SuiEventListener:
         except Exception as e:
             logger.error(f"Error processing NFT event: {e}")
 
-    async def store_analysis_result(self, nft_data: NFTData, fraud_result):
+    async def store_analysis_result(self, nft_data: NFTData, fraud_result: Dict[str, Any]):
         """Store analysis results in Supabase"""
         try:
             analysis_record = {
-                "is_fraud": fraud_result.is_fraud,
-                "confidence_score": fraud_result.confidence_score,
-                "flag_type": fraud_result.flag_type,
-                "reason": fraud_result.reason,
-                "details": fraud_result.details
+                "is_fraud": fraud_result.get("is_fraud", False),
+                "confidence_score": fraud_result.get("confidence_score", 0.0),
+                "flag_type": fraud_result.get("flag_type"),
+                "reason": fraud_result.get("reason", "Analysis completed"),
+                "details": fraud_result.get("analysis_details", {})
             }
 
             # Store in Supabase

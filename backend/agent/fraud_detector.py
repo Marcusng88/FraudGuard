@@ -244,47 +244,204 @@ class UnifiedFraudDetector:
             
             # Fallback if gemini analyzer not available
             return {
-                "description": f"NFT image analysis for {nft_data.title}",
-                "overall_fraud_score": 0.1,
-                "risk_level": "low",
-                "fraud_indicators": {},
-                "recommendation": "Gemini analyzer not available"
+                "description": f"Image analysis for {nft_data.title} - Gemini analyzer not available",
+                "artistic_style": "unknown",
+                "quality_assessment": "Analysis not available",
+                "fraud_indicators": {
+                    "low_effort_generation": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis not available"
+                    },
+                    "stolen_artwork": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis not available"
+                    },
+                    "ai_generated": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis not available"
+                    },
+                    "template_usage": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis not available"
+                    },
+                    "metadata_mismatch": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis not available"
+                    }
+                },
+                "overall_fraud_score": 0.0,
+                "risk_level": "unknown",
+                "key_visual_elements": [],
+                "color_palette": [],
+                "composition_analysis": "Analysis not available",
+                "uniqueness_score": 0.0,
+                "artistic_merit": "Analysis not available",
+                "technical_quality": "Analysis not available",
+                "market_value_assessment": "Analysis not available",
+                "recommendation": "Manual review required - Gemini analyzer not available",
+                "confidence_in_analysis": 0.0,
+                "additional_notes": "Gemini analyzer not available for detailed image analysis"
             }
             
         except Exception as e:
             logger.error(f"Error in image analysis: {e}")
             return {
                 "description": f"Error analyzing {nft_data.title}",
+                "artistic_style": "unknown",
+                "quality_assessment": "Analysis failed",
+                "fraud_indicators": {
+                    "low_effort_generation": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis failed"
+                    },
+                    "stolen_artwork": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis failed"
+                    },
+                    "ai_generated": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis failed"
+                    },
+                    "template_usage": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis failed"
+                    },
+                    "metadata_mismatch": {
+                        "detected": False,
+                        "confidence": 0.0,
+                        "evidence": "Analysis failed"
+                    }
+                },
                 "overall_fraud_score": 0.0,
                 "risk_level": "unknown",
-                "error": str(e)
+                "key_visual_elements": [],
+                "color_palette": [],
+                "composition_analysis": "Analysis failed",
+                "uniqueness_score": 0.0,
+                "artistic_merit": "Analysis failed",
+                "technical_quality": "Analysis failed",
+                "market_value_assessment": "Analysis failed",
+                "recommendation": "Manual review required - Analysis error",
+                "confidence_in_analysis": 0.0,
+                "additional_notes": f"Error: {str(e)}"
             }
     
     async def _check_similarity(self, nft_data: NFTData, image_analysis: Dict[str, Any]) -> Dict[str, Any]:
-        """Step 2: Check for similar NFTs using embeddings"""
+        """Step 2: Check for similar NFTs using embeddings and store evidence URLs"""
         try:
-            if not self.supabase_client or not image_analysis.get("embedding"):
+            # Get embedding from image analysis
+            embedding = image_analysis.get("embedding")
+            if not embedding:
+                logger.warning("No embedding available for similarity search")
                 return {
                     "similar_nfts": [],
                     "max_similarity": 0.0,
-                    "is_duplicate": False
+                    "is_duplicate": False,
+                    "similarity_count": 0,
+                    "evidence_urls": []
                 }
             
-            # Search for similar descriptions
-            similar_nfts = await self.supabase_client.search_similar_descriptions(
-                image_analysis["embedding"],
-                threshold=0.85,
-                limit=10
-            )
+            # Import database session for similarity search
+            try:
+                from database.connection import get_db
+                from sqlalchemy.orm import Session
+                from sqlalchemy import text
+                import numpy as np
+            except ImportError:
+                logger.warning("Database dependencies not available for similarity search")
+                return {
+                    "similar_nfts": [],
+                    "max_similarity": 0.0,
+                    "is_duplicate": False,
+                    "similarity_count": 0,
+                    "evidence_urls": []
+                }
             
-            max_similarity = max([nft["similarity"] for nft in similar_nfts]) if similar_nfts else 0.0
+            # Get database session
+            db = next(get_db())
             
-            return {
-                "similar_nfts": similar_nfts,
-                "max_similarity": max_similarity,
-                "is_duplicate": max_similarity > 0.95,
-                "similarity_count": len(similar_nfts)
-            }
+            try:
+                # Search for similar NFTs using vector similarity
+                # Use PostgreSQL's vector similarity search on the embedding_vector column
+                # For new NFTs, we don't have a valid UUID yet, so we exclude the current_nft_id check
+                query = text("""
+                    SELECT 
+                        id,
+                        title,
+                        image_url,
+                        wallet_address,
+                        embedding_vector <=> :embedding as distance
+                    FROM nfts 
+                    WHERE embedding_vector IS NOT NULL 
+                    ORDER BY embedding_vector <=> :embedding
+                    LIMIT 10
+                """)
+                
+                # Convert embedding to PostgreSQL vector format
+                embedding_str = f"[{','.join(map(str, embedding))}]"
+                
+                result = db.execute(query, {
+                    "embedding": embedding_str
+                })
+                
+                similar_nfts = []
+                evidence_urls = []
+                max_similarity = 0.0
+                
+                for row in result:
+                    # Convert distance to similarity (1 - distance)
+                    distance = float(row.distance)
+                    similarity = 1.0 - distance
+                    
+                    if similarity >= 0.7:  # Threshold for similar NFTs
+                        similar_nft = {
+                            "nft_id": str(row.id),
+                            "metadata": {
+                                "name": row.title,
+                                "creator": row.wallet_address,
+                                "image_url": row.image_url
+                            },
+                            "similarity": similarity
+                        }
+                        similar_nfts.append(similar_nft)
+                        evidence_urls.append(row.image_url)
+                        max_similarity = max(max_similarity, similarity)
+                
+                # Determine if this is a duplicate based on high similarity
+                is_duplicate = max_similarity > 0.95
+                
+                logger.info(f"Found {len(similar_nfts)} similar NFTs, max similarity: {max_similarity:.3f}")
+                
+                return {
+                    "similar_nfts": similar_nfts,
+                    "max_similarity": max_similarity,
+                    "is_duplicate": is_duplicate,
+                    "similarity_count": len(similar_nfts),
+                    "evidence_urls": evidence_urls
+                }
+                
+            except Exception as db_error:
+                logger.error(f"Database similarity search error: {db_error}")
+                # Return empty results when database search fails
+                return {
+                    "similar_nfts": [],
+                    "max_similarity": 0.0,
+                    "is_duplicate": False,
+                    "similarity_count": 0,
+                    "evidence_urls": [],
+                    "error": f"Database search failed: {str(db_error)}"
+                }
+            finally:
+                db.close()
             
         except Exception as e:
             logger.error(f"Error in similarity check: {e}")
@@ -292,6 +449,8 @@ class UnifiedFraudDetector:
                 "similar_nfts": [],
                 "max_similarity": 0.0,
                 "is_duplicate": False,
+                "similarity_count": 0,
+                "evidence_urls": [],
                 "error": str(e)
             }
     
@@ -331,6 +490,11 @@ class UnifiedFraudDetector:
             """
             
             response = await self.llm.ainvoke(metadata_prompt)
+            logger.info("=" * 80)
+            logger.info("LLM METADATA ANALYSIS RESPONSE:")
+            logger.info("=" * 80)
+            logger.info(response.content)
+            logger.info("=" * 80)
             
             try:
                 import json
@@ -462,7 +626,11 @@ class UnifiedFraudDetector:
             """
             
             response = await self.llm.ainvoke(decision_prompt)
-            logger.info(f"llm response{response.content}")
+            logger.info("=" * 80)
+            logger.info("LLM FRAUD DECISION RESPONSE:")
+            logger.info("=" * 80)
+            logger.info(response.content)
+            logger.info("=" * 80)
             try:
                 import json
                 
@@ -612,7 +780,43 @@ async def analyze_nft_for_fraud(nft_data: NFTData) -> Dict[str, Any]:
                     "description": f"Error in unified analysis: {str(e)}",
                     "artistic_style": "unknown",
                     "quality_assessment": "Analysis failed",
-                    "fraud_indicators": {},
+                    "fraud_indicators": {
+                        "low_effort_generation": {
+                            "detected": False,
+                            "confidence": 0.0,
+                            "evidence": "Analysis failed"
+                        },
+                        "stolen_artwork": {
+                            "detected": False,
+                            "confidence": 0.0,
+                            "evidence": "Analysis failed"
+                        },
+                        "ai_generated": {
+                            "detected": False,
+                            "confidence": 0.0,
+                            "evidence": "Analysis failed"
+                        },
+                        "template_usage": {
+                            "detected": False,
+                            "confidence": 0.0,
+                            "evidence": "Analysis failed"
+                        },
+                        "metadata_mismatch": {
+                            "detected": False,
+                            "confidence": 0.0,
+                            "evidence": "Analysis failed"
+                        },
+                        "copyright_violation": {
+                            "detected": False,
+                            "confidence": 0.0,
+                            "evidence": "Analysis failed"
+                        },
+                        "inappropriate_content": {
+                            "detected": False,
+                            "confidence": 0.0,
+                            "evidence": "Analysis failed"
+                        }
+                    },
                     "overall_fraud_score": 0.0,
                     "risk_level": "unknown",
                     "key_visual_elements": [],
@@ -679,7 +883,9 @@ def _fallback_fraud_analysis(nft_data: NFTData) -> Dict[str, Any]:
                     "stolen_artwork": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
                     "ai_generated": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
                     "template_usage": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
-                    "metadata_mismatch": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"}
+                    "metadata_mismatch": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
+                    "copyright_violation": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
+                    "inappropriate_content": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"}
                 },
                 "overall_fraud_score": confidence_score,
                 "risk_level": "low" if confidence_score < 0.3 else "medium" if confidence_score < 0.7 else "high",

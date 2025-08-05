@@ -42,7 +42,7 @@ class SupabaseVectorClient:
         """Initialize Supabase connection and vector database"""
         try:
             if not create_client or not settings.supabase_url or not settings.supabase_key:
-                logger.warning("Supabase not configured, using mock client")
+                logger.warning("Supabase not configured, client will not be available")
                 return True
             
             # Initialize Supabase client
@@ -194,19 +194,8 @@ class SupabaseVectorClient:
         """Search for similar NFT descriptions using vector similarity"""
         try:
             if not self.image_collection:
-                # Mock similar descriptions for development
-                return [
-                    {
-                        "nft_id": "0x456def",
-                        "similarity": 0.92,
-                        "metadata": {"name": "Similar NFT 1", "creator": "0x789"}
-                    },
-                    {
-                        "nft_id": "0x789ghi",
-                        "similarity": 0.88,
-                        "metadata": {"name": "Similar NFT 2", "creator": "0xabc"}
-                    }
-                ]
+                logger.warning("Image collection not available for similarity search")
+                return []
             
             # Perform vector similarity search
             results = self.image_collection.query(
@@ -237,8 +226,8 @@ class SupabaseVectorClient:
         """Cache NFT data to reduce blockchain queries"""
         try:
             if not self.client:
-                logger.debug(f"Mock caching NFT data: {nft_data.get('nft_id', 'unknown')}")
-                return True
+                logger.warning("Supabase client not available for caching NFT data")
+                return False
             
             # Insert or update NFT cache
             result = self.client.table(self.nft_cache_table).upsert({
@@ -284,8 +273,8 @@ class SupabaseVectorClient:
         """Store fraud analysis results"""
         try:
             if not self.client:
-                logger.debug(f"Mock storing analysis result for {nft_id}")
-                return True
+                logger.warning("Supabase client not available for storing analysis result")
+                return False
             
             # Store analysis result
             self.client.table(self.analysis_results_table).insert({
@@ -365,13 +354,14 @@ class SupabaseVectorClient:
         """Get fraud detection statistics"""
         try:
             if not self.client:
-                # Mock statistics
+                logger.warning("Supabase client not available for fraud statistics")
                 return {
-                    "total_analyzed": 150,
-                    "fraud_detected": 23,
-                    "fraud_rate": 0.153,
-                    "most_common_flag_type": 1,
-                    "avg_confidence_score": 0.78
+                    "total_analyzed": 0,
+                    "fraud_detected": 0,
+                    "fraud_rate": 0.0,
+                    "most_common_flag_type": 0,
+                    "avg_confidence_score": 0.0,
+                    "error": "Supabase client not available"
                 }
             
             # Query analysis results for statistics

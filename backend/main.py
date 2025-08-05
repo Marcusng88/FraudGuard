@@ -31,7 +31,6 @@ try:
     from agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
     from api.marketplace import router as marketplace_router
     from api.nft import router as nft_router
-    from api.pinata import router as pinata_router
     from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
@@ -42,7 +41,6 @@ except ImportError:
     from backend.agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
     from backend.api.marketplace import router as marketplace_router
     from backend.api.nft import router as nft_router
-    from backend.api.pinata import router as pinata_router
     from backend.database.connection import create_tables
 
 # Configure logging
@@ -97,7 +95,7 @@ async def lifespan(app):
         logger.warning("Sui configuration incomplete - some features may not work")
 
     if not validate_ai_config():
-        logger.warning("AI configuration incomplete - using mock analysis")
+        logger.warning("AI configuration incomplete - analysis may not be available")
 
     # Start fraud detection service in background
     fraud_detection_task = asyncio.create_task(start_fraud_detection_service())
@@ -132,11 +130,10 @@ if FastAPI:
     # Include routes
     app.include_router(marketplace_router)
     app.include_router(nft_router)
-    app.include_router(pinata_router, prefix="/api")
     
 else:
     app = None
-    logger.warning("FastAPI not available - running in mock mode")
+    logger.warning("FastAPI not available - API will not be available")
 
 
 # API Routes

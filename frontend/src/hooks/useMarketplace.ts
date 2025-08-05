@@ -2,7 +2,15 @@
  * React Query hooks for marketplace data fetching
  */
 import { useQuery } from '@tanstack/react-query';
-import { getMarketplaceNFTs, getNFTDetails } from '@/lib/api';
+import { 
+  getMarketplaceNFTs, 
+  getNFTDetails, 
+  getNFTAnalysisDetails,
+  getSimilarNFTs,
+  type NFT,
+  type NFTDetailResponse,
+  type MarketplaceResponse
+} from '@/lib/api';
 
 // Marketplace NFTs with pagination
 export const useMarketplaceNFTs = (filters: { page?: number; limit?: number } = {}) => {
@@ -23,6 +31,22 @@ export const useNFTDetails = (nftId: string | undefined) => {
     staleTime: 60000, // 1 minute
   });
 };
+
+export function useNFTAnalysisDetails(nftId: string | undefined) {
+  return useQuery({
+    queryKey: ['nft-analysis', nftId],
+    queryFn: () => getNFTAnalysisDetails(nftId!),
+    enabled: !!nftId,
+  });
+}
+
+export function useSimilarNFTs(nftId: string | undefined, limit: number = 5) {
+  return useQuery({
+    queryKey: ['similar-nfts', nftId, limit],
+    queryFn: () => getSimilarNFTs(nftId!, limit),
+    enabled: !!nftId,
+  });
+}
 
 // Marketplace statistics (mock for now)
 export const useMarketplaceStats = () => {

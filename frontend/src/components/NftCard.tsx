@@ -4,7 +4,7 @@ import { AlertTriangle, Shield, Eye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { NFT, AnalysisDetails } from '@/lib/api';
+import { NFT } from '@/lib/api';
 
 interface NftCardProps {
   nft: NFT;
@@ -154,31 +154,11 @@ export function NftCard({ nft }: NftCardProps) {
             </div>
           )}
 
-          {/* Show detailed analysis if available */}
-          {nft.analysis_details && (
-            <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded">
-              <span className="font-medium">Analysis:</span> 
-              {(() => {
-                try {
-                  const details = typeof nft.analysis_details === 'string' 
-                    ? JSON.parse(nft.analysis_details) as AnalysisDetails
-                    : nft.analysis_details as AnalysisDetails;
-                  
-                  if (details.llm_decision?.recommendation) {
-                    return ` ${details.llm_decision.recommendation}`;
-                  } else if (details.image_analysis?.risk_level) {
-                    return ` Risk: ${details.image_analysis.risk_level}`;
-                  } else if (details.image_analysis?.artistic_style) {
-                    return ` Style: ${details.image_analysis.artistic_style}`;
-                  } else {
-                    return ' Detailed analysis available';
-                  }
-                } catch (error) {
-                  return ' Analysis data available';
-                }
-              })()}
-            </div>
-          )}
+          {/* Analysis info - details available on click */}
+          <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded">
+            <span className="font-medium">Analysis:</span> 
+            {nft.is_fraud ? ' Detailed fraud analysis available' : ' AI verification completed'}
+          </div>
         </div>
 
         {/* Action buttons */}

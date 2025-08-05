@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
-from sqlalchemy import Column, String, Text, Boolean, Integer, DateTime, ForeignKey, DECIMAL
+from sqlalchemy import Column, String, Text, Boolean, Integer, DateTime, ForeignKey, DECIMAL, text
 from sqlalchemy.dialects.postgresql import UUID, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from pydantic import BaseModel
@@ -43,53 +43,63 @@ except ImportError:
         from backend.agent.supabase_client import supabase_client
         from backend.agent.clip_embeddings import get_embedding_service
     except ImportError:
-        logger.warning("Could not import AI services - running in mock mode")
+        logger.warning("Could not import AI services - analysis will not be available")
         def analyze_nft_for_fraud(nft_data):
             return {
                 "is_fraud": False,
-                "confidence_score": 0.15,
+                "confidence_score": 0.0,
                 "flag_type": None,
-                "reason": None,
-                "analysis_details": {}
+                "reason": "AI services not available",
+                "analysis_details": {
+                    "error": "AI services not available",
+                    "analysis_timestamp": datetime.now().isoformat()
+                }
             }
         supabase_client = None
         def get_embedding_service():
             return None
 
-# Database Models (matching your schema)
-class User(Base):
-    __tablename__ = "users"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    wallet_address = Column(String, unique=True, nullable=False)
-    email = Column(String, unique=True, nullable=False)
-    username = Column(String, nullable=False)
-    avatar_url = Column(String)
-    bio = Column(Text)
-    reputation_score = Column(DECIMAL(5, 2), default=0.0)
-    created_at = Column(DateTime, default=datetime.utcnow)
+# Import database models
+try:
+    from models.database import User, NFT, Base
+except ImportError:
+    try:
+        from backend.models.database import User, NFT, Base
+    except ImportError:
+        # Fallback models if import fails
+        class User(Base):
+            __tablename__ = "users"
+            
+            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+            wallet_address = Column(String, unique=True, nullable=False)
+            email = Column(String, unique=True, nullable=False)
+            username = Column(String, nullable=False)
+            avatar_url = Column(String)
+            bio = Column(Text)
+            reputation_score = Column(DECIMAL(5, 2), default=0.0)
+            created_at = Column(DateTime, default=datetime.utcnow)
 
-class NFT(Base):
-    __tablename__ = "nfts"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    wallet_address = Column(String, nullable=False)
-    title = Column(String, nullable=False)
-    description = Column(Text)
-    category = Column(String, nullable=False)
-    price = Column(DECIMAL(18, 8), nullable=False)
-    image_url = Column(String, nullable=False)
-    sui_object_id = Column(String, unique=True)
-    is_fraud = Column(Boolean, default=False)
-    confidence_score = Column(DECIMAL(5, 2), default=0.0)
-    flag_type = Column(Integer)
-    reason = Column(Text)
-    evidence_url = Column(Text)
-    analysis_details = Column(JSON)  # Use JSON type instead of Text for proper JSON storage
-    embedding_vector = Column(Vector(768))  # Gemini description embeddings are 768-dimensional
-    status = Column(String, default="pending")
-    created_at = Column(DateTime, default=datetime.utcnow)
+        class NFT(Base):
+            __tablename__ = "nfts"
+            
+            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+            owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+            wallet_address = Column(String, nullable=False)
+            title = Column(String, nullable=False)
+            description = Column(Text)
+            category = Column(String, nullable=False)
+            price = Column(DECIMAL(18, 8), nullable=False)
+            image_url = Column(String, nullable=False)
+            sui_object_id = Column(String, unique=True)
+            is_fraud = Column(Boolean, default=False)
+            confidence_score = Column(DECIMAL(5, 2), default=0.0)
+            flag_type = Column(Integer)
+            reason = Column(Text)
+            evidence_url = Column(Text)  # Store as JSON string for evidence URLs
+            analysis_details = Column(JSON)  # Use JSON type instead of Text for proper JSON storage
+            embedding_vector = Column(Vector(768))  # Gemini description embeddings are 768-dimensional
+            status = Column(String, default="pending")
+            created_at = Column(DateTime, default=datetime.utcnow)
 
 # Request/Response Models
 class NFTCreationRequest(BaseModel):
@@ -239,6 +249,14 @@ async def create_nft(
         if not isinstance(analysis_details, dict):
             analysis_details = {"raw_result": str(analysis_details)}
         
+        # Extract evidence URLs from similarity results for storage in evidence_url field
+        evidence_urls = []
+        if analysis_details.get("similarity_results") and analysis_details["similarity_results"].get("evidence_urls"):
+            evidence_urls = analysis_details["similarity_results"]["evidence_urls"]
+        
+        # Store evidence URLs as JSON array in evidence_url field
+        evidence_url_json = json.dumps(evidence_urls) if evidence_urls else None
+        
         # Create NFT with status "pending" initially
         nft = NFT(
             owner_id=user.id,
@@ -252,6 +270,7 @@ async def create_nft(
             confidence_score=confidence_score,
             flag_type=flag_type,
             reason=reason,
+            evidence_url=evidence_url_json,  # Store evidence URLs as JSON array
             analysis_details=analysis_details,  # Store as JSON object
             embedding_vector=image_embedding,  # Store description-based embedding as vector
             status="pending"  # Start with pending status
@@ -614,7 +633,7 @@ async def get_nft_details(
                 confidence_score=float(nft.confidence_score or 0.0),
                 status=nft.status,
                 created_at=nft.created_at,
-                analysis_details=nft.analysis_details
+                analysis_details=None  # Don't include full analysis details in main response
             ),
             "owner": {
                 "wallet_address": user.wallet_address if user else nft.wallet_address,
@@ -625,6 +644,66 @@ async def get_nft_details(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error fetching NFT details: {str(e)}")
+
+@router.get("/{nft_id}/analysis")
+async def get_nft_analysis_details(
+    nft_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get detailed analysis information for a specific NFT
+    This endpoint returns the full analysis details without embedding vectors
+    """
+    try:
+        # Validate UUID format
+        try:
+            import uuid
+            uuid.UUID(nft_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid NFT ID format")
+        
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not nft:
+            logger.warning(f"NFT not found with ID: {nft_id}")
+            return {
+                "nft_id": nft_id,
+                "analysis_details": {},
+                "is_fraud": False,
+                "confidence_score": 0.0,
+                "flag_type": None,
+                "reason": "NFT not found",
+                "status": "not_found",
+                "analyzed_at": None,
+                "message": "NFT not found"
+            }
+        
+        # Return only the analysis details, not the full NFT object
+        analysis_details = nft.analysis_details or {}
+        
+        # Ensure we don't include embedding vectors in the analysis details
+        if isinstance(analysis_details, dict):
+            # Remove any embedding-related fields if they exist
+            analysis_details.pop('embedding_vector', None)
+            analysis_details.pop('embedding', None)
+            analysis_details.pop('vector', None)
+        
+        return {
+            "nft_id": str(nft.id),
+            "analysis_details": analysis_details,
+            "is_fraud": nft.is_fraud,
+            "confidence_score": float(nft.confidence_score or 0.0),
+            "flag_type": nft.flag_type,
+            "reason": nft.reason,
+            "status": nft.status,
+            "analyzed_at": nft.created_at.isoformat() if nft.created_at else None
+        }
+
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching NFT analysis details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error fetching NFT analysis details: {str(e)}")
 
 
 # New model for frontend notifications
@@ -832,7 +911,7 @@ async def analyze_potential_duplicates(
         if not target_nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
-        if not target_nft.embedding_vector:
+        if target_nft.embedding_vector is None or len(target_nft.embedding_vector) == 0:
             raise HTTPException(status_code=400, detail="NFT does not have image embedding")
         
         # Find similar NFTs
@@ -941,7 +1020,7 @@ async def get_status_summary(db: Session = Depends(get_db)):
             else:
                 sui_object_id_counts["without_sui_id"] = sui_object_id_counts.get("without_sui_id", 0) + 1
             
-            if nft.embedding_vector:
+            if nft.embedding_vector is not None and len(nft.embedding_vector) > 0:
                 embedding_counts["with_embedding"] = embedding_counts.get("with_embedding", 0) + 1
             else:
                 embedding_counts["without_embedding"] = embedding_counts.get("without_embedding", 0) + 1
@@ -958,7 +1037,7 @@ async def get_status_summary(db: Session = Depends(get_db)):
                     "status": nft.status,
                     "sui_object_id": nft.sui_object_id,
                     "is_fraud": nft.is_fraud,
-                    "has_embedding": bool(nft.embedding_vector),
+                    "has_embedding": nft.embedding_vector is not None and len(nft.embedding_vector) > 0,
                     "has_analysis_details": bool(nft.analysis_details),
                     "created_at": nft.created_at.isoformat() if nft.created_at else None
                 }
@@ -1012,3 +1091,95 @@ async def get_embedding_status():
     except Exception as e:
         logger.error(f"Error checking embedding status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{nft_id}/similar")
+async def get_similar_nfts(
+    nft_id: str,
+    limit: int = 5,
+    db: Session = Depends(get_db)
+):
+    """
+    Get similar NFTs for a given NFT ID
+    """
+    try:
+        # Validate UUID format
+        try:
+            import uuid
+            uuid.UUID(nft_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid NFT ID format")
+        
+        # Get the target NFT
+        target_nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not target_nft:
+            logger.warning(f"NFT not found with ID: {nft_id}")
+            return {
+                "similar_nfts": [],
+                "total": 0,
+                "message": "NFT not found",
+                "target_nft_id": nft_id
+            }
+        
+        if target_nft.embedding_vector is None or len(target_nft.embedding_vector) == 0:
+            return {
+                "similar_nfts": [],
+                "total": 0,
+                "message": "No embedding available for similarity search",
+                "target_nft_id": nft_id,
+                "target_nft_title": target_nft.title
+            }
+        
+        # Search for similar NFTs using vector similarity
+        query = text("""
+            SELECT 
+                id,
+                title,
+                image_url,
+                wallet_address,
+                embedding_vector <=> :embedding as distance
+            FROM nfts 
+            WHERE embedding_vector IS NOT NULL 
+            AND id != :current_nft_id
+            AND status = 'minted'
+            ORDER BY embedding_vector <=> :embedding
+            LIMIT :limit
+        """)
+        
+        # Convert embedding to PostgreSQL vector format
+        embedding_str = f"[{','.join(map(str, target_nft.embedding_vector))}]"
+        
+        result = db.execute(query, {
+            "embedding": embedding_str,
+            "current_nft_id": nft_id,
+            "limit": limit
+        })
+        
+        similar_nfts = []
+        for row in result:
+            # Convert distance to similarity (1 - distance)
+            distance = float(row.distance)
+            similarity = 1.0 - distance
+            
+            if similarity >= 0.7:  # Threshold for similar NFTs
+                similar_nft = {
+                    "nft_id": str(row.id),
+                    "title": row.title,
+                    "image_url": row.image_url,
+                    "wallet_address": row.wallet_address,
+                    "similarity": similarity
+                }
+                similar_nfts.append(similar_nft)
+        
+        return {
+            "similar_nfts": similar_nfts,
+            "total": len(similar_nfts),
+            "target_nft_id": nft_id,
+            "target_nft_title": target_nft.title
+        }
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions
+        raise
+    except Exception as e:
+        logger.error(f"Error getting similar NFTs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting similar NFTs: {str(e)}")

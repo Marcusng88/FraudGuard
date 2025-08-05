@@ -42,7 +42,7 @@ class DescriptionEmbeddingService:
                     logger.info("Description embedding service initialized successfully")
                     return True
             
-            logger.warning("Gemini analyzer not available, using mock service")
+            logger.warning("Gemini analyzer not available, service will not be available")
             self.initialized = True
             return True
             
@@ -67,15 +67,11 @@ class DescriptionEmbeddingService:
             if not self.gemini_analyzer:
                 raise Exception("Gemini analyzer not available")
             
-            # Step 1: Extract description from image using Gemini
-            logger.info(f"Extracting description from image: {image_url}")
             description = await self.gemini_analyzer.extract_image_description(image_url)
             
             if not description:
                 raise Exception(f"Could not extract description from image: {image_url}")
             
-            # Step 2: Generate embedding from description
-            logger.info(f"Generating embedding from description: {description[:100]}...")
             embedding = await self.gemini_analyzer.embed_text(description)
             
             if embedding:
