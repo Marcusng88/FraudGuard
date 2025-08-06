@@ -2,351 +2,288 @@ import React, { useState } from 'react';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { 
   User, 
-  Shield, 
-  Settings, 
   Wallet, 
-  Activity, 
-  Award, 
-  Eye, 
-  AlertTriangle,
-  CheckCircle,
+  Shield, 
+  TrendingUp, 
+  AlertTriangle, 
+  Settings,
+  LogOut,
+  Plus,
+  DollarSign,
   Clock,
-  TrendingUp,
-  Zap
+  Eye
 } from 'lucide-react';
-
-// Mock user data
-const mockUser = {
-  name: 'CyberTrader',
-  email: 'cybertrader@fraudguard.com',
-  avatar: 'https://i.pinimg.com/736x/12/03/d8/1203d8d16d629bc7eeddb2a6ede57c8d.jpg?w=150&h=150&fit=crop',
-  walletAddress: '0x742d35Cc6634C0532925a3b8D4C9db96C4b4d8b6',
-  joinDate: 'March 2024',
-  totalTrades: 156,
-  successfulTrades: 142,
-  fraudDetected: 8,
-  verificationLevel: 'Verified',
-  reputation: 4.8
-};
-
-const mockStats = [
-  {
-    icon: TrendingUp,
-    title: 'Total Trades',
-    value: mockUser.totalTrades,
-    color: 'text-primary',
-    bg: 'bg-primary/10',
-    border: 'border-primary/30'
-  },
-  {
-    icon: CheckCircle,
-    title: 'Successful',
-    value: mockUser.successfulTrades,
-    color: 'text-primary',
-    bg: 'bg-primary/10',
-    border: 'border-primary/30'
-  },
-  {
-    icon: AlertTriangle,
-    title: 'Fraud Detected',
-    value: mockUser.fraudDetected,
-    color: 'text-destructive',
-    bg: 'bg-destructive/10',
-    border: 'border-destructive/30'
-  },
-  {
-    icon: Award,
-    title: 'Reputation',
-    value: mockUser.reputation,
-    color: 'text-secondary',
-    bg: 'bg-secondary/10',
-    border: 'border-secondary/30'
-  }
-];
-
-const mockRecentActivity = [
-  {
-    type: 'trade',
-    title: 'Purchased "Cyber Punk #001"',
-    description: 'Successfully traded 2.5 ETH',
-    timestamp: '2 hours ago',
-    status: 'success'
-  },
-  {
-    type: 'fraud',
-    title: 'Fraud Alert Prevented',
-    description: 'Avoided suspicious NFT transaction',
-    timestamp: '1 day ago',
-    status: 'warning'
-  },
-  {
-    type: 'verification',
-    title: 'Account Verified',
-    description: 'Enhanced security level activated',
-    timestamp: '3 days ago',
-    status: 'success'
-  },
-  {
-    type: 'trade',
-    title: 'Sold "Digital Dreams"',
-    description: 'Successfully traded 1.8 ETH',
-    timestamp: '1 week ago',
-    status: 'success'
-  }
-];
+import { useWallet } from '@/hooks/useWallet';
+import { ListingManager } from '@/components/ListingManager';
+import { useUserListings, useMarketplaceAnalytics } from '@/hooks/useListings';
 
 const Profile = () => {
-  const [isEditing, setIsEditing] = useState(false);
-  const [userData, setUserData] = useState(mockUser);
+  const { wallet, disconnect, connect } = useWallet();
+  const [activeTab, setActiveTab] = useState('overview');
 
-  const handleSave = () => {
-    setIsEditing(false);
-    // Here you would typically save to backend
+  // Fetch user's listings
+  const { data: userListings } = useUserListings(wallet?.address || '');
+  
+  // Fetch marketplace analytics
+  const { data: analytics } = useMarketplaceAnalytics('24h');
+
+  const formatAddress = (address: string) => {
+    return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'success':
-        return <CheckCircle className="w-4 h-4 text-primary" />;
-      case 'warning':
-        return <AlertTriangle className="w-4 h-4 text-warning" />;
-      default:
-        return <Clock className="w-4 h-4 text-muted-foreground" />;
-    }
+  const formatBalance = (balance: number) => {
+    return `${balance.toFixed(2)} SUI`;
   };
+
+  if (!wallet?.address) {
+    return (
+      <div className="min-h-screen bg-background relative">
+        <FloatingWarningIcon />
+        <CyberNavigation />
+        
+        <div className="container mx-auto px-6 py-16">
+          <div className="text-center py-12">
+            <div className="w-16 h-16 bg-muted/20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <User className="w-8 h-8 text-muted-foreground" />
+            </div>
+            <h3 className="text-lg font-semibold text-foreground mb-2">Connect Your Wallet</h3>
+            <p className="text-muted-foreground mb-4">
+              Connect your wallet to view your profile and manage your NFTs.
+            </p>
+            <Button onClick={connect}>
+              Connect Wallet
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background relative">
-      {/* Floating warning icon */}
       <FloatingWarningIcon />
-      
-      {/* Navigation */}
       <CyberNavigation />
       
-      {/* Hero Section */}
-      <section className="relative py-16 overflow-hidden">
-        {/* Animated background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-background via-primary/5 to-secondary/10" />
-        
-        {/* Floating orbs */}
-        <div className="absolute top-20 left-20 w-32 h-32 bg-primary/20 rounded-full blur-3xl animate-float" />
-        <div className="absolute bottom-20 right-20 w-40 h-40 bg-secondary/20 rounded-full blur-3xl animate-float" style={{ animationDelay: '1s' }} />
-        <div className="absolute top-1/2 left-1/2 w-24 h-24 bg-accent/30 rounded-full blur-2xl animate-pulse-glow" />
-
-        {/* Grid pattern overlay */}
-        <div 
-          className="absolute inset-0 opacity-10"
-          style={{
-            backgroundImage: `
-              linear-gradient(hsl(var(--border)) 1px, transparent 1px),
-              linear-gradient(90deg, hsl(var(--border)) 1px, transparent 1px)
-            `,
-            backgroundSize: '50px 50px'
-          }}
-        />
-
-        <div className="relative z-10 container mx-auto px-6">
-          <div className="max-w-4xl mx-auto">
-            {/* Profile Header */}
-            <div className="text-center space-y-6">
-              <div className="flex flex-col items-center space-y-4">
-                <Avatar className="w-24 h-24 border-4 border-primary/30">
-                  <AvatarImage src={userData.avatar} alt={userData.name} />
-                  <AvatarFallback className="text-2xl font-bold bg-primary/10 text-primary">
-                    {userData.name.charAt(0)}
-                  </AvatarFallback>
-                </Avatar>
+      <div className="container mx-auto px-6 py-16">
+        {/* Profile Header */}
+        <div className="mb-8">
+          <div className="flex items-center gap-6">
+            <Avatar className="w-20 h-20">
+              <AvatarImage src="/placeholder-avatar.png" />
+              <AvatarFallback className="text-2xl">
+                {wallet.address.slice(2, 4).toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            
+            <div className="flex-1">
+              <h1 className="text-3xl font-bold text-foreground mb-2">User Profile</h1>
+              <p className="text-muted-foreground mb-4">
+                Manage your NFTs, listings, and account settings
+              </p>
+              
+              <div className="flex items-center gap-4">
+                <Badge variant="outline" className="flex items-center gap-2">
+                  <Wallet className="w-4 h-4" />
+                  {formatAddress(wallet.address)}
+                </Badge>
                 
-                <div className="space-y-2">
-                  <h1 className="text-3xl font-bold text-foreground">{userData.name}</h1>
-                  <p className="text-muted-foreground">{userData.email}</p>
-                  <Badge variant="outline" className="bg-primary/10 border-primary/30 text-primary">
-                    {userData.verificationLevel}
+                {wallet.balance && (
+                  <Badge variant="outline" className="flex items-center gap-2">
+                    <DollarSign className="w-4 h-4" />
+                    {formatBalance(wallet.balance)}
                   </Badge>
-                </div>
-              </div>
-
-              {/* Quick Stats */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                {mockStats.map((stat, index) => {
-                  const Icon = stat.icon;
-                  return (
-                    <div 
-                      key={stat.title}
-                      className={`glass-panel p-4 text-center ${stat.bg} ${stat.border} border`}
-                      style={{ animationDelay: `${index * 100}ms` }}
-                    >
-                      <Icon className={`w-6 h-6 mx-auto mb-2 ${stat.color}`} />
-                      <div className="text-2xl font-bold text-foreground">{stat.value}</div>
-                      <div className="text-sm text-muted-foreground">{stat.title}</div>
-                    </div>
-                  );
-                })}
+                )}
+                
+                <Button variant="outline" size="sm" onClick={disconnect}>
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Disconnect
+                </Button>
               </div>
             </div>
           </div>
         </div>
-      </section>
 
-      {/* Profile Content */}
-      <div className="container mx-auto px-6 space-y-8">
-        {/* Profile Information */}
-        <section className="glass-panel p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl font-bold text-foreground">Profile Information</h2>
-            <Button
-              variant={isEditing ? "cyber" : "glass"}
-              size="sm"
-              onClick={() => isEditing ? handleSave() : setIsEditing(true)}
-            >
-              {isEditing ? 'Save Changes' : 'Edit Profile'}
-            </Button>
-          </div>
+        {/* Profile Stats */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          {[
+            {
+              icon: Shield,
+              title: 'Verified NFTs',
+              value: userListings?.filter(l => l.status === 'active').length || 0,
+              color: 'text-primary'
+            },
+            {
+              icon: TrendingUp,
+              title: 'Active Listings',
+              value: userListings?.filter(l => l.status === 'active').length || 0,
+              color: 'text-success'
+            },
+            {
+              icon: Clock,
+              title: 'Total Sales',
+              value: 0, // TODO: Implement sales tracking
+              color: 'text-secondary'
+            },
+            {
+              icon: Eye,
+              title: 'Profile Views',
+              value: 0, // TODO: Implement profile view tracking
+              color: 'text-muted-foreground'
+            }
+          ].map((stat, index) => {
+            const Icon = stat.icon;
+            return (
+              <Card key={index} className="glass-panel p-6 group hover-glow">
+                <div className="flex items-center justify-center mb-4">
+                  <Icon className={`w-8 h-8 ${stat.color}`} />
+                </div>
+                <h3 className="text-2xl font-bold text-foreground mb-2">{stat.value}</h3>
+                <p className="text-sm text-muted-foreground">{stat.title}</p>
+              </Card>
+            );
+          })}
+        </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">Display Name</label>
-                {isEditing ? (
-                  <Input
-                    value={userData.name}
-                    onChange={(e) => setUserData(prev => ({ ...prev, name: e.target.value }))}
-                    className="mt-1 bg-card/30 border-border/50"
-                  />
-                ) : (
-                  <p className="text-foreground mt-1">{userData.name}</p>
-                )}
-              </div>
-              
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">Email</label>
-                {isEditing ? (
-                  <Input
-                    value={userData.email}
-                    onChange={(e) => setUserData(prev => ({ ...prev, email: e.target.value }))}
-                    className="mt-1 bg-card/30 border-border/50"
-                  />
-                ) : (
-                  <p className="text-foreground mt-1">{userData.email}</p>
-                )}
-              </div>
+        {/* Profile Tabs */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+          <TabsList className="grid w-full grid-cols-4">
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="listings">My Listings</TabsTrigger>
+            <TabsTrigger value="nfts">My NFTs</TabsTrigger>
+            <TabsTrigger value="settings">Settings</TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="overview" className="space-y-6">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Recent Activity */}
+              <Card className="glass-panel p-6">
+                <h3 className="text-xl font-semibold text-foreground mb-4">Recent Activity</h3>
+                <div className="space-y-4">
+                  {userListings?.slice(0, 5).map((listing, index) => (
+                    <div key={index} className="flex items-center gap-4 p-3 bg-muted/20 rounded-lg">
+                      <div className="w-10 h-10 bg-primary/20 rounded-full flex items-center justify-center">
+                        <DollarSign className="w-5 h-5 text-primary" />
+                      </div>
+                      <div className="flex-1">
+                        <p className="font-medium text-foreground">
+                          {listing.nft_title || 'Untitled NFT'}
+                        </p>
+                        <p className="text-sm text-muted-foreground">
+                          Listed for {listing.price} SUI
+                        </p>
+                      </div>
+                      <Badge variant={listing.status === 'active' ? 'default' : 'secondary'}>
+                        {listing.status}
+                      </Badge>
+                    </div>
+                  ))}
+                  
+                  {(!userListings || userListings.length === 0) && (
+                    <div className="text-center py-8">
+                      <TrendingUp className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+                      <p className="text-muted-foreground">No recent activity</p>
+                    </div>
+                  )}
+                </div>
+              </Card>
+
+              {/* Marketplace Stats */}
+              <Card className="glass-panel p-6">
+                <h3 className="text-xl font-semibold text-foreground mb-4">Marketplace Overview</h3>
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between p-3 bg-muted/20 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <TrendingUp className="w-5 h-5 text-success" />
+                      <span className="text-foreground">Total Listings</span>
+                    </div>
+                    <span className="font-semibold">{analytics?.total_listings || 0}</span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-3 bg-muted/20 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <DollarSign className="w-5 h-5 text-primary" />
+                      <span className="text-foreground">Total Volume</span>
+                    </div>
+                    <span className="font-semibold">{analytics?.total_volume || 0} SUI</span>
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-3 bg-muted/20 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <User className="w-5 h-5 text-secondary" />
+                      <span className="text-foreground">Active Sellers</span>
+                    </div>
+                    <span className="font-semibold">{analytics?.active_sellers || 0}</span>
+                  </div>
+                </div>
+              </Card>
             </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">Wallet Address</label>
-                <p className="text-foreground mt-1 font-mono text-sm">{userData.walletAddress}</p>
+          </TabsContent>
+          
+          <TabsContent value="listings">
+            <ListingManager />
+          </TabsContent>
+          
+          <TabsContent value="nfts">
+            <Card className="glass-panel p-6">
+              <div className="text-center py-12">
+                <div className="w-16 h-16 bg-muted/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Plus className="w-8 h-8 text-muted-foreground" />
+                </div>
+                <h3 className="text-lg font-semibold text-foreground mb-2">My NFTs</h3>
+                <p className="text-muted-foreground mb-4">
+                  View and manage your NFT collection
+                </p>
+                <Button>
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create NFT
+                </Button>
               </div>
-              
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">Member Since</label>
-                <p className="text-foreground mt-1">{userData.joinDate}</p>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Recent Activity */}
-        <section className="glass-panel p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <h2 className="text-2xl font-bold text-foreground">Recent Activity</h2>
-            <div className="h-px bg-gradient-to-r from-primary/50 to-transparent flex-1" />
-          </div>
-
-          <div className="space-y-4">
-            {mockRecentActivity.map((activity, index) => (
-              <div 
-                key={index}
-                className="flex items-center gap-4 p-4 bg-card/20 border border-border/30 rounded-lg hover:bg-card/30 transition-colors"
-              >
-                <div className="flex-shrink-0">
-                  {getStatusIcon(activity.status)}
+            </Card>
+          </TabsContent>
+          
+          <TabsContent value="settings">
+            <Card className="glass-panel p-6">
+              <h3 className="text-xl font-semibold text-foreground mb-4">Account Settings</h3>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between p-4 bg-muted/20 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Settings className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-foreground">Profile Settings</span>
+                  </div>
+                  <Button variant="outline" size="sm">
+                    Edit
+                  </Button>
                 </div>
                 
-                <div className="flex-1">
-                  <h3 className="font-medium text-foreground">{activity.title}</h3>
-                  <p className="text-sm text-muted-foreground">{activity.description}</p>
+                <div className="flex items-center justify-between p-4 bg-muted/20 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Shield className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-foreground">Security Settings</span>
+                  </div>
+                  <Button variant="outline" size="sm">
+                    Configure
+                  </Button>
                 </div>
                 
-                <div className="text-xs text-muted-foreground">
-                  {activity.timestamp}
-                </div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        {/* Security Settings */}
-        <section className="glass-panel p-6">
-          <div className="flex items-center gap-3 mb-6">
-            <h2 className="text-2xl font-bold text-foreground">Security Settings</h2>
-            <div className="h-px bg-gradient-to-r from-primary/50 to-transparent flex-1" />
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-card/20 border border-border/30 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Shield className="w-5 h-5 text-primary" />
-                  <div>
-                    <h3 className="font-medium text-foreground">Two-Factor Authentication</h3>
-                    <p className="text-sm text-muted-foreground">Enhanced account security</p>
+                <div className="flex items-center justify-between p-4 bg-muted/20 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <AlertTriangle className="w-5 h-5 text-muted-foreground" />
+                    <span className="text-foreground">Notification Preferences</span>
                   </div>
+                  <Button variant="outline" size="sm">
+                    Manage
+                  </Button>
                 </div>
-                <Button variant="outline" size="sm">
-                  Enable
-                </Button>
               </div>
-
-              <div className="flex items-center justify-between p-4 bg-card/20 border border-border/30 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Wallet className="w-5 h-5 text-primary" />
-                  <div>
-                    <h3 className="font-medium text-foreground">Wallet Connection</h3>
-                    <p className="text-sm text-muted-foreground">Manage connected wallets</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm">
-                  Manage
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="flex items-center justify-between p-4 bg-card/20 border border-border/30 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Activity className="w-5 h-5 text-primary" />
-                  <div>
-                    <h3 className="font-medium text-foreground">Activity Log</h3>
-                    <p className="text-sm text-muted-foreground">View account activity</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm">
-                  View
-                </Button>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-card/20 border border-border/30 rounded-lg">
-                <div className="flex items-center gap-3">
-                  <Zap className="w-5 h-5 text-primary" />
-                  <div>
-                    <h3 className="font-medium text-foreground">AI Protection</h3>
-                    <p className="text-sm text-muted-foreground">Fraud detection settings</p>
-                  </div>
-                </div>
-                <Button variant="outline" size="sm">
-                  Configure
-                </Button>
-              </div>
-            </div>
-          </div>
-        </section>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

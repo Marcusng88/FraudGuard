@@ -154,7 +154,7 @@ export default function CreateNft() {
       // Step 2: Create NFT record in database (includes AI fraud detection)
       toast({
         title: "Creating NFT...",
-        description: "Storing NFT metadata and running fraud analysis",
+        description: "Storing NFT metadata, running fraud analysis, and preparing for marketplace listing",
       });
 
       const nftData = {
@@ -193,7 +193,7 @@ export default function CreateNft() {
       // Step 3: Mint NFT on blockchain
       toast({
         title: "Minting NFT...",
-        description: "Creating your NFT on the Sui blockchain",
+        description: "Creating your NFT on the Sui blockchain and listing in marketplace",
       });
 
       const tx = new Transaction();
@@ -390,7 +390,7 @@ export default function CreateNft() {
                 title: "NFT created successfully! 🎉",
                 description: (
                   <div className="flex items-center gap-2">
-                    <span>Your NFT has been minted and listed</span>
+                    <span>Your NFT has been minted and automatically listed in marketplace</span>
                     <a 
                       href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
                       target="_blank"
@@ -430,7 +430,7 @@ export default function CreateNft() {
                 title: "NFT minted successfully! 🎉",
                 description: (
                   <div className="flex items-center gap-2">
-                    <span>Your NFT has been minted on blockchain</span>
+                    <span>Your NFT has been minted and will be automatically listed in marketplace</span>
                     <a 
                       href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
                       target="_blank"

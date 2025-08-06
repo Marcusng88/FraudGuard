@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { NFT } from '@/lib/api';
+import { useWallet } from '@/hooks/useWallet';
 
 interface NftCardProps {
   nft: NFT;
@@ -36,6 +37,7 @@ const threatConfig = {
 
 export function NftCard({ nft }: NftCardProps) {
   const navigate = useNavigate();
+  const { wallet, connect } = useWallet();
   
   // Determine threat level based on fraud status and confidence
   const threatLevel = nft.is_fraud ? 'danger' : (nft.confidence_score >= 0.8 ? 'safe' : 'warning');
@@ -62,6 +64,17 @@ export function NftCard({ nft }: NftCardProps) {
 
   const handleViewClick = (e: React.MouseEvent) => {
     e.stopPropagation();
+    navigate(`/nft/${nft.id}`);
+  };
+
+  const handlePurchase = (nft: NFT) => {
+    if (!wallet?.address) {
+      // If wallet is not connected, prompt user to connect
+      connect();
+      return;
+    }
+    
+    // Navigate to NFT detail page for purchase
     navigate(`/nft/${nft.id}`);
   };
 
@@ -167,7 +180,16 @@ export function NftCard({ nft }: NftCardProps) {
             variant={threatLevel === 'danger' ? 'destructive' : 'default'} 
             size="sm" 
             className="flex-1"
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (threatLevel === 'danger') {
+                // For flagged items, show review details
+                navigate(`/nft/${nft.id}`);
+              } else {
+                // For safe items, initiate purchase
+                handlePurchase(nft);
+              }
+            }}
             disabled={threatLevel === 'danger'}
           >
             {threatLevel === 'danger' ? 'Review' : 'Buy Now'}

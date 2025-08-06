@@ -29,8 +29,11 @@ try:
     from agent.sui_client import sui_client
     from agent.supabase_client import supabase_client
     from agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
+    from agent.listing_sync_service import start_listing_sync_service, stop_listing_sync_service
     from api.marketplace import router as marketplace_router
     from api.nft import router as nft_router
+    from api.listings import router as listings_router
+    from api.kiosk import router as kiosk_router
     from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
@@ -39,8 +42,11 @@ except ImportError:
     from backend.agent.sui_client import sui_client
     from backend.agent.supabase_client import supabase_client
     from backend.agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
+    from backend.agent.listing_sync_service import start_listing_sync_service, stop_listing_sync_service
     from backend.api.marketplace import router as marketplace_router
     from backend.api.nft import router as nft_router
+    from backend.api.listings import router as listings_router
+    from backend.api.kiosk import router as kiosk_router
     from backend.database.connection import create_tables
 
 # Configure logging
@@ -59,10 +65,12 @@ class HealthResponse(BaseModel):
     sui_connected: bool
     ai_configured: bool
     fraud_detection_active: bool
+    listing_sync_active: bool
 
 
-# Background task for fraud detection service
+# Background tasks
 fraud_detection_task = None
+listing_sync_task = None
 
 
 @asynccontextmanager
@@ -99,6 +107,9 @@ async def lifespan(app):
 
     # Start fraud detection service in background
     fraud_detection_task = asyncio.create_task(start_fraud_detection_service())
+    
+    # Start listing synchronization service in background
+    listing_sync_task = asyncio.create_task(start_listing_sync_service())
 
     yield
 
@@ -106,7 +117,10 @@ async def lifespan(app):
     logger.info("Shutting down FraudGuard backend...")
     if fraud_detection_task:
         fraud_detection_task.cancel()
+    if listing_sync_task:
+        listing_sync_task.cancel()
     await stop_fraud_detection_service()
+    await stop_listing_sync_service()
 
 
 # Create FastAPI app
@@ -130,6 +144,8 @@ if FastAPI:
     # Include routes
     app.include_router(marketplace_router)
     app.include_router(nft_router)
+    app.include_router(listings_router)
+    app.include_router(kiosk_router)
     
 else:
     app = None
@@ -159,7 +175,8 @@ if app:
                 version="1.0.0",
                 sui_connected=sui_connected,
                 ai_configured=validate_ai_config(),
-                fraud_detection_active=fraud_detection_task is not None and not fraud_detection_task.done()
+                fraud_detection_active=fraud_detection_task is not None and not fraud_detection_task.done(),
+                listing_sync_active=listing_sync_task is not None and not listing_sync_task.done()
             )
         except Exception as e:
             logger.error(f"Health check failed: {e}")

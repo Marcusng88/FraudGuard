@@ -3,10 +3,11 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { createNetworkConfig, SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
+import { createNetworkConfig, SuiClientProvider, WalletProvider as SuiWalletProvider } from '@mysten/dapp-kit';
 import { getFullnodeUrl } from '@mysten/sui/client';
 import '@mysten/dapp-kit/dist/index.css';
 
+import { WalletProvider } from './hooks/useWallet';
 import Index from "./pages/Index";
 import Marketplace from "./pages/Marketplace";
 import CreateNft from "./pages/CreateNft";
@@ -26,23 +27,31 @@ const { networkConfig } = createNetworkConfig({
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <SuiClientProvider networks={networkConfig} defaultNetwork="testnet">
-      <WalletProvider>
-        <TooltipProvider>
-          <Toaster />
-          <Sonner />
-          <BrowserRouter>
-            <Routes>
-              <Route path="/" element={<Index />} />
-              <Route path="/marketplace" element={<Marketplace />} />
-              <Route path="/nft/:nftId" element={<NFTDetail />} />
-              <Route path="/create" element={<CreateNft />} />
-              <Route path="/profile" element={<Profile />} />
-              {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </BrowserRouter>
-        </TooltipProvider>
-      </WalletProvider>
+      <SuiWalletProvider 
+        autoConnect={true}
+        slushWallet={{
+          name: 'FraudGuard',
+          origin: window.location.origin
+        }}
+      >
+        <WalletProvider>
+          <TooltipProvider>
+            <Toaster />
+            <Sonner />
+            <BrowserRouter>
+              <Routes>
+                <Route path="/" element={<Index />} />
+                <Route path="/marketplace" element={<Marketplace />} />
+                <Route path="/nft/:nftId" element={<NFTDetail />} />
+                <Route path="/create" element={<CreateNft />} />
+                <Route path="/profile" element={<Profile />} />
+                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </BrowserRouter>
+          </TooltipProvider>
+        </WalletProvider>
+      </SuiWalletProvider>
     </SuiClientProvider>
   </QueryClientProvider>
 );

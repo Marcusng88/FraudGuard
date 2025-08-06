@@ -29,6 +29,12 @@ export interface NFT {
   evidence_url?: string; // JSON string containing array of evidence URLs
   status: string;
   created_at: string;
+  is_listed?: boolean;
+  listing_price?: number;
+  last_listed_at?: string;
+  listing_id?: string;
+  kiosk_id?: string;
+  listing_status?: string;
 }
 
 // Analysis Details Interface
@@ -113,6 +119,27 @@ export interface ConfirmMintResponse {
   message: string;
   nft_id: string;
   sui_object_id: string;
+}
+
+// Phase 1.1: Kiosk Management Interfaces
+export interface KioskResponse {
+  user_id: string;
+  kiosk_id: string;
+  kiosk_owner_cap_id?: string;
+  sync_status: string;
+  last_synced_at: string;
+  created_at: string;
+}
+
+export interface KioskCreateRequest {
+  wallet_address: string;
+}
+
+export interface KioskOwnershipResponse {
+  owns_kiosk: boolean;
+  kiosk_id?: string;
+  sync_status?: string;
+  message?: string;
 }
 
 export interface MarketplaceResponse {
@@ -223,5 +250,276 @@ export async function getSimilarNFTs(nftId: string, limit: number = 5): Promise<
     throw new Error(error.detail || 'Failed to fetch similar NFTs');
   }
 
+  return response.json();
+}
+
+// Phase 1.1: Kiosk Management API Functions
+export async function createKiosk(walletAddress: string): Promise<KioskResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/kiosk/create`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ wallet_address: walletAddress }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create kiosk');
+  }
+  return response.json();
+}
+
+export async function getUserKiosk(walletAddress: string): Promise<KioskResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/kiosk/user/${walletAddress}`);
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get user kiosk');
+  }
+  return response.json();
+}
+
+export async function checkKioskOwnership(walletAddress: string, kioskId: string): Promise<KioskOwnershipResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/kiosk/check-ownership`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ 
+      wallet_address: walletAddress,
+      kiosk_id: kioskId 
+    }),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to check kiosk ownership');
+  }
+  return response.json();
+}
+
+// Phase 4: Listing Management Interfaces
+export interface Listing {
+  id: string;
+  nft_id: string;
+  seller_id: string;
+  price: number;
+  status: string;
+  kiosk_id?: string;
+  listing_id?: string;
+  blockchain_tx_id?: string;
+  created_at: string;
+  updated_at?: string;
+  metadata?: Record<string, any>;
+  nft_title?: string;
+  nft_image_url?: string;
+  seller_username?: string;
+}
+
+export interface ListingCreateRequest {
+  nft_id: string;
+  price: number;
+  wallet_address: string;
+  expires_at?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface ListingUpdateRequest {
+  listing_id: string;
+  price?: number;
+  expires_at?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface ListingHistory {
+  id: string;
+  listing_id: string;
+  nft_id: string;
+  action: string;
+  old_price?: number;
+  new_price?: number;
+  seller_id: string;
+  kiosk_id?: string;
+  blockchain_tx_id?: string;
+  timestamp: string;
+}
+
+export interface MarketplaceListingsResponse {
+  listings: Listing[];
+  total: number;
+  page: number;
+  limit: number;
+  total_pages: number;
+}
+
+export interface MarketplaceAnalytics {
+  time_period: string;
+  total_listings: number;
+  new_listings: number;
+  total_volume: number;
+  average_price: number;
+  top_categories: Array<{ category: string; count: number }>;
+  active_sellers: number;
+  price_distribution: {
+    under_10: number;
+    '10_50': number;
+    '50_100': number;
+    over_100: number;
+  };
+}
+
+// Phase 4: Listing Management API Functions
+export async function getUserListings(walletAddress: string): Promise<Listing[]> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/user/${walletAddress}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch user listings');
+  }
+  
+  return response.json();
+}
+
+export async function getUserNFTs(walletAddress: string): Promise<NFT[]> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/user/${walletAddress}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch user NFTs');
+  }
+  
+  return response.json();
+}
+
+export async function createListing(data: ListingCreateRequest): Promise<Listing> {
+  const response = await fetch(`${API_BASE_URL}/api/listings`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create listing');
+  }
+  
+  return response.json();
+}
+
+export async function updateListing(data: ListingUpdateRequest): Promise<Listing> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${data.listing_id}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update listing');
+  }
+  
+  return response.json();
+}
+
+export async function deleteListing(listingId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}`, {
+    method: 'DELETE',
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to delete listing');
+  }
+  
+  return response.json();
+}
+
+export async function getMarketplaceListings(filters: {
+  category?: string;
+  min_price?: number;
+  max_price?: number;
+  seller_username?: string;
+  sort_by?: string;
+  sort_order?: string;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<MarketplaceListingsResponse> {
+  const params = new URLSearchParams();
+  
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      params.append(key, value.toString());
+    }
+  });
+  
+  const response = await fetch(`${API_BASE_URL}/api/listings/marketplace?${params.toString()}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch marketplace listings');
+  }
+  
+  return response.json();
+}
+
+export async function getListingDetails(listingId: string): Promise<Listing> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch listing details');
+  }
+  
+  return response.json();
+}
+
+export async function getListingHistory(listingId: string): Promise<ListingHistory[]> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}/history`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch listing history');
+  }
+  
+  return response.json();
+}
+
+export async function getMarketplaceAnalytics(timePeriod: string = '24h'): Promise<MarketplaceAnalytics> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/marketplace/analytics?time_period=${timePeriod}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch marketplace analytics');
+  }
+  
+  return response.json();
+}
+
+export async function searchListings(searchQuery: string, filters: {
+  category?: string;
+  min_price?: number;
+  max_price?: number;
+  limit?: number;
+  offset?: number;
+} = {}): Promise<Listing[]> {
+  const params = new URLSearchParams({ q: searchQuery });
+  
+  Object.entries(filters).forEach(([key, value]) => {
+    if (value !== undefined && value !== null) {
+      params.append(key, value.toString());
+    }
+  });
+  
+  const response = await fetch(`${API_BASE_URL}/api/listings/search?${params.toString()}`);
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to search listings');
+  }
+  
   return response.json();
 }

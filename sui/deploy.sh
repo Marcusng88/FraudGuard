@@ -43,7 +43,7 @@ sui client gas
 
 # Deploy to testnet
 echo "🚀 Deploying to Sui testnet..."
-DEPLOY_OUTPUT=$(sui client publish --gas-budget 100000000)
+DEPLOY_OUTPUT=$(sui client publish --gas-budget 200000000)
 
 if [ $? -ne 0 ]; then
     echo "❌ Deployment failed."

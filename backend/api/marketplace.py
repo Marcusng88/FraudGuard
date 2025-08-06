@@ -11,15 +11,18 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import and_, or_, desc, func
 from pydantic import BaseModel
 from enum import Enum
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Import database connection and models
 try:
     from database.connection import get_db
-    from models.database import User, NFT, Listing, FraudFlag
+    from models.database import User, NFT, Listing, FraudFlag, UserKioskMap
 except ImportError:
     try:
         from backend.database.connection import get_db
-        from backend.models.database import User, NFT, Listing, FraudFlag
+        from backend.models.database import User, NFT, Listing, FraudFlag, UserKioskMap
     except ImportError:
         # Fallback for development
         def get_db():
@@ -37,7 +40,7 @@ except ImportError:
                 db.close()
         
         # Fallback model imports
-        from models.database import User, NFT, Listing, FraudFlag
+        from models.database import User, NFT, Listing, FraudFlag, UserKioskMap
 
 # Response Models
 class ThreatLevel(str, Enum):
@@ -133,10 +136,11 @@ async def get_marketplace_nfts(
     Get marketplace NFT listings with filtering and pagination
     """
     try:
-        # Base query for NFTs with status 'minted' or 'active'
+        # Base query for NFTs with status 'minted' or 'active' AND listed for sale
         # For hackathon: show all NFTs including flagged ones
         query = db.query(NFT).filter(
-            NFT.status.in_(["minted", "active"])
+            NFT.status.in_(["minted", "active"]),
+            NFT.is_listed == True  # Only show NFTs that are actually listed for sale
         )
         
         # Note: For production, you might want to filter out high-confidence fraud NFTs
@@ -169,6 +173,25 @@ async def get_marketplace_nfts(
         # Convert to response format
         nft_responses = []
         for nft in nfts:
+            # Safely serialize analysis_details if it exists
+            analysis_details = nft.analysis_details
+            if analysis_details is not None:
+                try:
+                    # Import the safe serialization function
+                    from api.nft import safe_serialize_analysis_details
+                    analysis_details = safe_serialize_analysis_details(analysis_details)
+                except ImportError:
+                    # Fallback if import fails
+                    if not isinstance(analysis_details, dict):
+                        analysis_details = {"raw_result": str(analysis_details)}
+                except Exception as serialization_error:
+                    logger.error(f"Error serializing analysis_details: {serialization_error}")
+                    # Fallback to a safe default
+                    analysis_details = {
+                        "error": f"Serialization failed: {str(serialization_error)}",
+                        "raw_data": str(analysis_details)
+                    }
+            
             nft_response = NFTResponse(
                 id=str(nft.id),
                 title=nft.title,
@@ -182,7 +205,7 @@ async def get_marketplace_nfts(
                 confidence_score=nft.confidence_score,
                 status=nft.status,
                 created_at=nft.created_at,
-                analysis_details=nft.analysis_details
+                analysis_details=analysis_details
             )
             nft_responses.append(nft_response)
         
@@ -214,6 +237,18 @@ async def get_nft_details(
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
+        # Safely serialize analysis_details if it exists
+        analysis_details = nft.analysis_details
+        if analysis_details is not None:
+            try:
+                # Import the safe serialization function
+                from api.nft import safe_serialize_analysis_details
+                analysis_details = safe_serialize_analysis_details(analysis_details)
+            except ImportError:
+                # Fallback if import fails
+                if not isinstance(analysis_details, dict):
+                    analysis_details = {"raw_result": str(analysis_details)}
+        
         return NFTDetailResponse(
             id=str(nft.id),
             title=nft.title,
@@ -229,7 +264,7 @@ async def get_nft_details(
             reason=nft.reason,
             status=nft.status,
             created_at=nft.created_at,
-            analysis_details=nft.analysis_details
+            analysis_details=analysis_details
         )
         
     except HTTPException:
@@ -292,6 +327,25 @@ async def get_featured_nfts(
         # Convert to response format
         featured_nfts = []
         for nft in nfts:
+            # Safely serialize analysis_details if it exists
+            analysis_details = nft.analysis_details
+            if analysis_details is not None:
+                try:
+                    # Import the safe serialization function
+                    from api.nft import safe_serialize_analysis_details
+                    analysis_details = safe_serialize_analysis_details(analysis_details)
+                except ImportError:
+                    # Fallback if import fails
+                    if not isinstance(analysis_details, dict):
+                        analysis_details = {"raw_result": str(analysis_details)}
+                except Exception as serialization_error:
+                    logging.error(f"Error serializing analysis_details: {serialization_error}")
+                    # Fallback to a safe default
+                    analysis_details = {
+                        "error": f"Serialization failed: {str(serialization_error)}",
+                        "raw_data": str(analysis_details)
+                    }
+            
             nft_response = NFTResponse(
                 id=str(nft.id),
                 title=nft.title,
@@ -305,7 +359,7 @@ async def get_featured_nfts(
                 confidence_score=nft.confidence_score,
                 status=nft.status,
                 created_at=nft.created_at,
-                analysis_details=nft.analysis_details
+                analysis_details=analysis_details
             )
             featured_nfts.append(nft_response)
         
@@ -368,9 +422,10 @@ async def create_nft(
 
         return {
             "success": True,
-            "message": "NFT created and queued for analysis",
+            "message": "NFT created and queued for analysis. Will be automatically listed in marketplace after minting.",
             "nft_id": str(nft.id),
-            "analysis_status": "queued"
+            "analysis_status": "queued",
+            "auto_list_enabled": True
         }
 
     except Exception as e:
@@ -386,6 +441,7 @@ async def confirm_nft_mint(
 ):
     """
     Confirm NFT has been minted on blockchain and update status
+    Automatically lists the NFT in marketplace (restores previous behavior)
     """
     try:
         nft = db.query(NFT).filter(NFT.id == nft_id).first()
@@ -394,13 +450,20 @@ async def confirm_nft_mint(
         
         nft.sui_object_id = sui_object_id
         nft.status = "minted"
+        # Automatically list the NFT in marketplace when minted
+        nft.is_listed = True
+        nft.listing_price = nft.price
+        nft.last_listed_at = datetime.utcnow()
+        nft.listing_status = "active"
+        
         db.commit()
 
         return {
             "success": True,
-            "message": "NFT mint confirmed",
+            "message": "NFT mint confirmed and automatically listed in marketplace",
             "nft_id": nft_id,
-            "sui_object_id": sui_object_id
+            "sui_object_id": sui_object_id,
+            "is_listed": True
         }
 
     except Exception as e:
@@ -418,9 +481,10 @@ async def get_recent_nfts(
     This endpoint shows NFTs that have been newly minted and are available for trading
     """
     try:
-        # Query for recently created NFTs, ordered by creation date
+        # Query for recently created NFTs that are listed for sale, ordered by creation date
         recent_nfts = db.query(NFT).filter(
-            NFT.status.in_(["minted", "active", "listed"])
+            NFT.status.in_(["minted", "active", "listed"]),
+            NFT.is_listed == True  # Only show NFTs that are listed for sale
         ).order_by(desc(NFT.created_at)).limit(limit).all()
         
         # Convert to response format
@@ -433,6 +497,25 @@ async def get_recent_nfts(
             
             is_fraud = latest_fraud_flag.confidence_score > 60 if latest_fraud_flag else False
             confidence_score = latest_fraud_flag.confidence_score / 100.0 if latest_fraud_flag else 0.0
+            
+            # Safely serialize analysis_details if it exists
+            analysis_details = nft.analysis_details
+            if analysis_details is not None:
+                try:
+                    # Import the safe serialization function
+                    from api.nft import safe_serialize_analysis_details
+                    analysis_details = safe_serialize_analysis_details(analysis_details)
+                except ImportError:
+                    # Fallback if import fails
+                    if not isinstance(analysis_details, dict):
+                        analysis_details = {"raw_result": str(analysis_details)}
+                except Exception as serialization_error:
+                    logging.error(f"Error serializing analysis_details: {serialization_error}")
+                    # Fallback to a safe default
+                    analysis_details = {
+                        "error": f"Serialization failed: {str(serialization_error)}",
+                        "raw_data": str(analysis_details)
+                    }
             
             nft_responses.append(NFTResponse(
                 id=nft.id,
@@ -447,7 +530,7 @@ async def get_recent_nfts(
                 confidence_score=confidence_score,
                 status=nft.status,
                 created_at=nft.created_at,
-                analysis_details=nft.analysis_details
+                analysis_details=analysis_details
             ))
         
         return nft_responses
@@ -562,3 +645,148 @@ async def run_fraud_analysis(nft_id: str, image_url: str, title: str, descriptio
             
     except Exception as e:
         print(f"Error in fraud analysis for {nft_id}: {e}")
+
+# ===== Phase 1.1: Kiosk Management Endpoints =====
+
+class KioskResponse(BaseModel):
+    """Response model for kiosk operations"""
+    user_id: str
+    kiosk_id: str
+    kiosk_owner_cap_id: Optional[str]
+    sync_status: str
+    last_synced_at: datetime
+    created_at: datetime
+
+class KioskCreateRequest(BaseModel):
+    """Request model for kiosk creation"""
+    wallet_address: str
+
+@router.post("/kiosk/create", response_model=KioskResponse)
+async def create_kiosk(
+    request: KioskCreateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a kiosk for a user if they don't have one
+    This endpoint handles the automatic kiosk creation process
+    """
+    try:
+        # Find user by wallet address
+        user = db.query(User).filter(User.wallet_address == request.wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check if user already has a kiosk
+        existing_kiosk = db.query(UserKioskMap).filter(UserKioskMap.user_id == user.id).first()
+        if existing_kiosk:
+            return KioskResponse(
+                user_id=str(user.id),
+                kiosk_id=existing_kiosk.kiosk_id,
+                kiosk_owner_cap_id=existing_kiosk.kiosk_owner_cap_id,
+                sync_status=existing_kiosk.sync_status,
+                last_synced_at=existing_kiosk.last_synced_at,
+                created_at=existing_kiosk.created_at
+            )
+        
+        # TODO: In a real implementation, this would call the Sui blockchain
+        # to create the kiosk and get the kiosk_id and cap_id
+        # For now, we'll simulate the creation
+        import uuid
+        kiosk_id = f"0x{uuid.uuid4().hex}"  # Simulated kiosk ID
+        cap_id = f"0x{uuid.uuid4().hex}"  # Simulated cap ID
+        
+        # Create kiosk mapping in database
+        kiosk_map = UserKioskMap(
+            user_id=user.id,
+            kiosk_id=kiosk_id,
+            kiosk_owner_cap_id=cap_id,
+            sync_status="synced",
+            last_synced_at=datetime.utcnow()
+        )
+        
+        db.add(kiosk_map)
+        db.commit()
+        db.refresh(kiosk_map)
+        
+        return KioskResponse(
+            user_id=str(user.id),
+            kiosk_id=kiosk_map.kiosk_id,
+            kiosk_owner_cap_id=kiosk_map.kiosk_owner_cap_id,
+            sync_status=kiosk_map.sync_status,
+            last_synced_at=kiosk_map.last_synced_at,
+            created_at=kiosk_map.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating kiosk: {str(e)}")
+
+@router.get("/kiosk/user/{wallet_address}", response_model=KioskResponse)
+async def get_user_kiosk(
+    wallet_address: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get user's kiosk information
+    """
+    try:
+        # Find user by wallet address
+        user = db.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Get kiosk mapping
+        kiosk_map = db.query(UserKioskMap).filter(UserKioskMap.user_id == user.id).first()
+        if not kiosk_map:
+            raise HTTPException(status_code=404, detail="Kiosk not found for user")
+        
+        return KioskResponse(
+            user_id=str(user.id),
+            kiosk_id=kiosk_map.kiosk_id,
+            kiosk_owner_cap_id=kiosk_map.kiosk_owner_cap_id,
+            sync_status=kiosk_map.sync_status,
+            last_synced_at=kiosk_map.last_synced_at,
+            created_at=kiosk_map.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error getting kiosk: {str(e)}")
+
+@router.post("/kiosk/check-ownership")
+async def check_kiosk_ownership(
+    wallet_address: str,
+    kiosk_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Check if a user owns a specific kiosk
+    """
+    try:
+        # Find user by wallet address
+        user = db.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Check kiosk ownership in database
+        kiosk_map = db.query(UserKioskMap).filter(
+            UserKioskMap.user_id == user.id,
+            UserKioskMap.kiosk_id == kiosk_id
+        ).first()
+        
+        if not kiosk_map:
+            return {"owns_kiosk": False, "message": "User does not own this kiosk"}
+        
+        return {
+            "owns_kiosk": True,
+            "kiosk_id": kiosk_map.kiosk_id,
+            "sync_status": kiosk_map.sync_status
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error checking kiosk ownership: {str(e)}")

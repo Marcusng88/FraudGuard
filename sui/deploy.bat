@@ -62,7 +62,7 @@ sui client gas
 
 REM Deploy to testnet
 echo 🚀 Deploying to Sui testnet...
-sui client publish --gas-budget 100000000 > deploy_output.txt 2>&1
+sui client publish --gas-budget 200000000 > deploy_output.txt 2>&1
 
 if %errorlevel% neq 0 (
     echo ❌ Deployment failed.

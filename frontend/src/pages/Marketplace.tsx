@@ -6,14 +6,20 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Filter, Grid3X3, List, Shield, AlertTriangle, Eye, Loader2 } from 'lucide-react';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Search, Filter, Grid3X3, List, Shield, AlertTriangle, Eye, Loader2, Plus, DollarSign, Clock, TrendingUp } from 'lucide-react';
 import { useMarketplaceNFTs, useMarketplaceStats } from '@/hooks/useMarketplace';
+import { useMarketplaceListings, useMarketplaceAnalytics } from '@/hooks/useListings';
+import { useWallet } from '@/hooks/useWallet';
+import { ListingManager } from '@/components/ListingManager';
 
 const Marketplace = () => {
+  const { wallet, connect } = useWallet();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [currentPage, setCurrentPage] = useState(1);
+  const [activeTab, setActiveTab] = useState('browse');
 
   // Build filters for API call
   const filters = useMemo(() => ({
@@ -24,6 +30,15 @@ const Marketplace = () => {
   // Fetch marketplace data
   const { data: marketplaceData, isLoading, error, refetch } = useMarketplaceNFTs(filters);
   const { data: stats } = useMarketplaceStats();
+  
+  // Fetch marketplace listings
+  const { data: listingsData, isLoading: listingsLoading } = useMarketplaceListings({
+    limit: 20,
+    offset: (currentPage - 1) * 20
+  });
+  
+  // Fetch marketplace analytics
+  const { data: analytics } = useMarketplaceAnalytics('24h');
 
   // Handle search change with debouncing
   const handleSearchChange = (value: string) => {
@@ -139,7 +154,7 @@ const Marketplace = () => {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-12">
               {[
                 {
                   icon: Shield,
@@ -158,6 +173,12 @@ const Marketplace = () => {
                   title: 'Flagged Items',
                   value: stats?.flagged_nfts || 0,
                   color: 'text-destructive'
+                },
+                {
+                  icon: TrendingUp,
+                  title: 'Active Listings',
+                  value: analytics?.total_listings || 0,
+                  color: 'text-success'
                 }
               ].map((stat, index) => {
                 const Icon = stat.icon;
@@ -178,8 +199,26 @@ const Marketplace = () => {
 
       {/* Marketplace Content */}
       <div className="container mx-auto px-6 pb-16">
-        {/* Search and Filters */}
-        <section className="mb-12">
+        {/* Tabs for Browse and My Listings */}
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="mb-8">
+          <TabsList className="grid w-full grid-cols-2">
+            <TabsTrigger value="browse">Browse Marketplace</TabsTrigger>
+            <TabsTrigger 
+              value="my-listings"
+              className={!wallet?.address ? "opacity-60" : ""}
+            >
+              My Listings
+              {!wallet?.address && (
+                <Badge variant="outline" className="ml-2 text-xs">
+                  Connect Wallet
+                </Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
+          
+          <TabsContent value="browse" className="mt-6">
+            {/* Search and Filters */}
+            <section className="mb-12">
           <div className="flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
             {/* Search */}
             <div className="relative flex-1 max-w-md">
@@ -371,6 +410,31 @@ const Marketplace = () => {
             )}
           </section>
         )}
+          </TabsContent>
+          
+          <TabsContent value="my-listings" className="mt-6">
+            {wallet?.address ? (
+              <ListingManager />
+            ) : (
+              <div className="text-center py-16">
+                <div className="w-20 h-20 bg-gradient-to-br from-primary/20 to-secondary/20 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <TrendingUp className="w-10 h-10 text-primary" />
+                </div>
+                <h3 className="text-2xl font-bold text-foreground mb-3">Connect Your Wallet</h3>
+                <p className="text-muted-foreground mb-6 max-w-md mx-auto">
+                  Connect your wallet to view and manage your NFT listings. You'll be able to create new listings, edit existing ones, and track your sales.
+                </p>
+                <Button 
+                  onClick={connect}
+                  className="bg-gradient-to-r from-primary to-secondary text-primary-foreground px-8 py-3 text-lg"
+                  size="lg"
+                >
+                  Connect Wallet
+                </Button>
+              </div>
+            )}
+          </TabsContent>
+        </Tabs>
       </div>
     </div>
   );

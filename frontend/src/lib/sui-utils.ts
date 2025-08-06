@@ -88,7 +88,7 @@ export function createIPFSUrl(hash: string): string {
 }
 
 // Package ID from successful deployment
-export const PACKAGE_ID = '0x98079b6bc9b00a531e5e0cbc14c086cfa87c6fa240d4ee8aa7b82ca9444149b8';
+export const PACKAGE_ID = '0xc641fa0c43224cf06fa7ca433d80641a93adb98f1679036de6dc6088714752ed';
 
 /**
  * Mint NFT transaction
