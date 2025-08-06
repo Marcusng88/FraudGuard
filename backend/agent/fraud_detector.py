@@ -75,7 +75,7 @@ class UnifiedFraudDetector:
             if ChatGoogleGenerativeAI and settings.google_api_key:
                 try:
                     self.llm = ChatGoogleGenerativeAI(
-                        model=settings.google_model or "gemini-1.5-pro-latest",
+                        model=settings.google_model,
                         temperature=0.1,
                         google_api_key=settings.google_api_key
                     )

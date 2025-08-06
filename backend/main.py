@@ -33,7 +33,6 @@ try:
     from api.marketplace import router as marketplace_router
     from api.nft import router as nft_router
     from api.listings import router as listings_router
-    from api.kiosk import router as kiosk_router
     from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
@@ -46,7 +45,6 @@ except ImportError:
     from backend.api.marketplace import router as marketplace_router
     from backend.api.nft import router as nft_router
     from backend.api.listings import router as listings_router
-    from backend.api.kiosk import router as kiosk_router
     from backend.database.connection import create_tables
 
 # Configure logging
@@ -145,7 +143,6 @@ if FastAPI:
     app.include_router(marketplace_router)
     app.include_router(nft_router)
     app.include_router(listings_router)
-    app.include_router(kiosk_router)
     
 else:
     app = None

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
 import { ListingManager } from '@/components/ListingManager';
+import { MyNFTs } from '@/components/MyNFTs';
 import { useUserListings, useMarketplaceAnalytics } from '@/hooks/useListings';
 
 const Profile = () => {
@@ -155,7 +156,7 @@ const Profile = () => {
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="listings">My Listings</TabsTrigger>
-            <TabsTrigger value="nfts">My NFTs</TabsTrigger>
+            <TabsTrigger value="nfts">My Collection</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           
@@ -230,21 +231,7 @@ const Profile = () => {
           </TabsContent>
           
           <TabsContent value="nfts">
-            <Card className="glass-panel p-6">
-              <div className="text-center py-12">
-                <div className="w-16 h-16 bg-muted/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Plus className="w-8 h-8 text-muted-foreground" />
-                </div>
-                <h3 className="text-lg font-semibold text-foreground mb-2">My NFTs</h3>
-                <p className="text-muted-foreground mb-4">
-                  View and manage your NFT collection
-                </p>
-                <Button>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create NFT
-                </Button>
-              </div>
-            </Card>
+            <MyNFTs />
           </TabsContent>
           
           <TabsContent value="settings">

@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # Google AI Configuration (Gemini)
     google_api_key: Optional[str] = Field(default=None, env="GOOGLE_API_KEY")
-    google_model: str = Field(default="gemini-1.5-pro-latest", env="GOOGLE_MODEL")
+    google_model: str = Field(default="gemini-2.5-flash-lite", env="GOOGLE_MODEL")
     gemini_embedding_model: str = Field(default="models/embedding-001", env="GEMINI_EMBEDDING_MODEL")
     gemini_temperature: float = Field(default=0.1, env="GEMINI_TEMPERATURE")
     gemini_max_tokens: int = Field(default=1000, env="GEMINI_MAX_TOKENS")

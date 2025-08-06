@@ -7,6 +7,7 @@ import {
   createListing, 
   updateListing, 
   deleteListing,
+  unlistNFT,
   getUserNFTs,
   getMarketplaceListings,
   getListingDetails,
@@ -79,15 +80,33 @@ export const useDeleteListing = () => {
   const queryClient = useQueryClient();
   
   return useMutation({
-    mutationFn: (listingId: string) => deleteListing(listingId),
-    onSuccess: (data, listingId) => {
-      // Invalidate and refetch user listings
-      queryClient.invalidateQueries({ queryKey: ['listings', 'user'] });
-      queryClient.invalidateQueries({ queryKey: ['nfts', 'user'] });
+    mutationFn: ({ listingId, walletAddress }: { listingId: string; walletAddress: string }) => deleteListing(listingId),
+    onSuccess: (data, variables) => {
+      // Invalidate and refetch user listings with specific wallet address
+      queryClient.invalidateQueries({ queryKey: ['listings', 'user', variables.walletAddress] });
+      queryClient.invalidateQueries({ queryKey: ['nfts', 'user', variables.walletAddress] });
       queryClient.invalidateQueries({ queryKey: ['marketplace'] });
     },
     onError: (error) => {
       console.error('Failed to delete listing:', error);
+    },
+  });
+};
+
+// Unlist NFT mutation (updates NFT's is_listed status)
+export const useUnlistNFT = () => {
+  const queryClient = useQueryClient();
+  
+  return useMutation({
+    mutationFn: ({ nftId, walletAddress }: { nftId: string; walletAddress: string }) => unlistNFT(nftId),
+    onSuccess: (data, variables) => {
+      // Invalidate and refetch user NFTs and listings
+      queryClient.invalidateQueries({ queryKey: ['nfts', 'user', variables.walletAddress] });
+      queryClient.invalidateQueries({ queryKey: ['listings', 'user', variables.walletAddress] });
+      queryClient.invalidateQueries({ queryKey: ['marketplace'] });
+    },
+    onError: (error) => {
+      console.error('Failed to unlist NFT:', error);
     },
   });
 };
