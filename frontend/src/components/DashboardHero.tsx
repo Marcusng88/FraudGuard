@@ -36,9 +36,9 @@ export function DashboardHero() {
               Trade NFTs
               <br />
               with{' '}
-                              <span className="text-primary" style={{ textShadow: '0 0 5px hsl(var(--primary))' }}>
-                  Confidence
-                </span>
+              <span className="text-primary" style={{ textShadow: '0 0 5px hsl(var(--primary))' }}>
+                Confidence
+              </span>
             </h1>
             
             <p className="text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">

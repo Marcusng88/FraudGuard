@@ -5,7 +5,7 @@ import { WalletConnection } from '@/components/WalletConnection';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const navItems = [
-  { label: 'Dashboard', icon: Home, path: '/' },
+  { label: 'Dashboard', icon: Home, path: '/dashboard' },
   { label: 'Marketplace', icon: BarChart3, path: '/marketplace' },
   { label: 'Create', icon: Zap, path: '/create' },
   { label: 'Profile', icon: Users, path: '/profile' }
