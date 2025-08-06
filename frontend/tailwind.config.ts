@@ -1,4 +1,5 @@
 import type { Config } from "tailwindcss";
+import tailwindcssAnimate from "tailwindcss-animate";
 
 export default {
 	darkMode: ["class"],
@@ -18,6 +19,32 @@ export default {
 			}
 		},
 		extend: {
+			spacing: {
+				'128': '32rem',
+				'144': '36rem',
+				'192': '48rem',
+				'256': '64rem'
+			},
+			gridTemplateColumns: {
+				'13': 'repeat(13, minmax(0, 1fr))',
+				'14': 'repeat(14, minmax(0, 1fr))',
+				'15': 'repeat(15, minmax(0, 1fr))',
+				'16': 'repeat(16, minmax(0, 1fr))',
+				'17': 'repeat(17, minmax(0, 1fr))',
+				'18': 'repeat(18, minmax(0, 1fr))',
+				'19': 'repeat(19, minmax(0, 1fr))',
+				'20': 'repeat(20, minmax(0, 1fr))'
+			},
+			gridTemplateRows: {
+				'13': 'repeat(13, minmax(0, 1fr))',
+				'14': 'repeat(14, minmax(0, 1fr))',
+				'15': 'repeat(15, minmax(0, 1fr))',
+				'16': 'repeat(16, minmax(0, 1fr))',
+				'17': 'repeat(17, minmax(0, 1fr))',
+				'18': 'repeat(18, minmax(0, 1fr))',
+				'19': 'repeat(19, minmax(0, 1fr))',
+				'20': 'repeat(20, minmax(0, 1fr))'
+			},
 			colors: {
 				border: 'hsl(var(--border))',
 				input: 'hsl(var(--input))',
@@ -124,6 +151,19 @@ export default {
 				'cyber-spin': {
 					'0%': { transform: 'rotateY(0deg)' },
 					'100%': { transform: 'rotateY(360deg)' }
+				},
+				'pulse-red': {
+					'0%, 100%': { opacity: '1', transform: 'scale(1)' },
+					'50%': { opacity: '0.7', transform: 'scale(1.1)' }
+				},
+				'matrix-rain': {
+					'0%': { opacity: '0', transform: 'translateY(-20px)' },
+					'50%': { opacity: '1' },
+					'100%': { opacity: '0', transform: 'translateY(20px)' }
+				},
+				'binary-scroll': {
+					'0%': { transform: 'translateY(0)' },
+					'100%': { transform: 'translateY(-100%)' }
 				}
 			},
 			animation: {
@@ -133,9 +173,12 @@ export default {
 				'float': 'float 3s ease-in-out infinite',
 				'glitch': 'glitch 0.3s infinite',
 				'scan-line': 'scan-line 2s linear infinite',
-				'cyber-spin': 'cyber-spin 3s linear infinite'
+				'cyber-spin': 'cyber-spin 3s linear infinite',
+				'pulse-red': 'pulse-red 1s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+				'matrix-rain': 'matrix-rain 3s linear infinite',
+				'binary-scroll': 'binary-scroll 4s linear infinite'
 			}
 		}
 	},
-	plugins: [require("tailwindcss-animate")],
+	plugins: [tailwindcssAnimate],
 } satisfies Config;

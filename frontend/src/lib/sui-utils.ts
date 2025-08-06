@@ -2,9 +2,9 @@ import { Transaction } from '@mysten/sui/transactions';
 import { SuiClient } from '@mysten/sui/client';
 
 // Pinata configuration
-const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY || process.env.PINATA_API_KEY;
-const PINATA_SECRET_API_KEY = import.meta.env.VITE_PINATA_SECRET_API_KEY || process.env.PINATA_SECRET_API_KEY;
-const PINATA_JWT = import.meta.env.VITE_PINATA_JWT || process.env.PINATA_JWT;
+const PINATA_API_KEY = import.meta.env.VITE_PINATA_API_KEY;
+const PINATA_SECRET_API_KEY = import.meta.env.VITE_PINATA_SECRET_API_KEY;
+const PINATA_JWT = import.meta.env.VITE_PINATA_JWT;
 
 export interface PinataUploadResponse {
   IpfsHash: string;

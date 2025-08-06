@@ -7,6 +7,7 @@ import { NftCard } from '@/components/NftCard';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
 import { getMarketplaceNFTs } from '@/lib/api';
 import { NFT } from '@/lib/api';
+import { WalletConnection } from '@/components/WalletConnection';
 
 const Index = () => {
   const [nfts, setNfts] = useState<NFT[]>([]);
@@ -94,6 +95,11 @@ const Index = () => {
               ))}
             </div>
           )}
+        </section>
+        
+        {/* Wallet Connection */}
+        <section className="pb-12">
+          <WalletConnection />
         </section>
       </div>
     </div>

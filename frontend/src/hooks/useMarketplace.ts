@@ -7,9 +7,11 @@ import {
   getNFTDetails, 
   getNFTAnalysisDetails,
   getSimilarNFTs,
+  getMarketplaceStats,
   type NFT,
   type NFTDetailResponse,
-  type MarketplaceResponse
+  type MarketplaceResponse,
+  type MarketplaceStats
 } from '@/lib/api';
 
 // Marketplace NFTs with pagination
@@ -48,17 +50,12 @@ export function useSimilarNFTs(nftId: string | undefined, limit: number = 5) {
   });
 }
 
-// Marketplace statistics (mock for now)
+// Marketplace statistics
 export const useMarketplaceStats = () => {
   return useQuery({
     queryKey: ['marketplace', 'stats'],
-    queryFn: () => Promise.resolve({
-      total_nfts: 0,
-      active_listings: 0,
-      verified_nfts: 0,
-      flagged_nfts: 0,
-      total_volume_sui: 0,
-    }),
+    queryFn: () => getMarketplaceStats(),
     staleTime: 60000, // 1 minute
+    refetchInterval: 300000, // Refetch every 5 minutes
   });
 };

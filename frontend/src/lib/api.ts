@@ -89,7 +89,13 @@ export interface AnalysisDetails {
   };
 }
 
-
+// Marketplace Statistics Interface
+export interface MarketplaceStats {
+  total_nfts: number;
+  total_volume: number;
+  average_price: number;
+  fraud_detection_rate: number;
+}
 
 export interface NFTCreationRequest {
   title: string;
@@ -195,6 +201,17 @@ export async function getMarketplaceNFTs(page: number = 1, limit: number = 20): 
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to fetch marketplace NFTs');
+  }
+
+  return response.json();
+}
+
+export async function getMarketplaceStats(): Promise<MarketplaceStats> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/stats`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch marketplace stats');
   }
 
   return response.json();
