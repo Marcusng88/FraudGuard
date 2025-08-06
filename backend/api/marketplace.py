@@ -18,11 +18,11 @@ logger = logging.getLogger(__name__)
 # Import database connection and models
 try:
     from database.connection import get_db
-    from models.database import User, NFT, Listing, FraudFlag, UserKioskMap
+    from models.database import User, NFT, Listing, FraudFlag
 except ImportError:
     try:
         from backend.database.connection import get_db
-        from backend.models.database import User, NFT, Listing, FraudFlag, UserKioskMap
+        from backend.models.database import User, NFT, Listing, FraudFlag
     except ImportError:
         # Fallback for development
         def get_db():
@@ -422,10 +422,10 @@ async def create_nft(
 
         return {
             "success": True,
-            "message": "NFT created and queued for analysis. Will be automatically listed in marketplace after minting.",
+            "message": "NFT created and queued for analysis. Will be unlisted by default after minting.",
             "nft_id": str(nft.id),
             "analysis_status": "queued",
-            "auto_list_enabled": True
+            "auto_list_enabled": False
         }
 
     except Exception as e:
@@ -441,7 +441,7 @@ async def confirm_nft_mint(
 ):
     """
     Confirm NFT has been minted on blockchain and update status
-    Automatically lists the NFT in marketplace (restores previous behavior)
+    NFTs are unlisted by default when minted
     """
     try:
         nft = db.query(NFT).filter(NFT.id == nft_id).first()
@@ -450,20 +450,20 @@ async def confirm_nft_mint(
         
         nft.sui_object_id = sui_object_id
         nft.status = "minted"
-        # Automatically list the NFT in marketplace when minted
-        nft.is_listed = True
-        nft.listing_price = nft.price
-        nft.last_listed_at = datetime.utcnow()
-        nft.listing_status = "active"
+        # NFT is unlisted by default when minted
+        nft.is_listed = False
+        nft.listing_price = None
+        nft.last_listed_at = None
+        nft.listing_status = "inactive"
         
         db.commit()
 
         return {
             "success": True,
-            "message": "NFT mint confirmed and automatically listed in marketplace",
+            "message": "NFT mint confirmed and set as unlisted by default",
             "nft_id": nft_id,
             "sui_object_id": sui_object_id,
-            "is_listed": True
+            "is_listed": False
         }
 
     except Exception as e:
@@ -646,147 +646,4 @@ async def run_fraud_analysis(nft_id: str, image_url: str, title: str, descriptio
     except Exception as e:
         print(f"Error in fraud analysis for {nft_id}: {e}")
 
-# ===== Phase 1.1: Kiosk Management Endpoints =====
 
-class KioskResponse(BaseModel):
-    """Response model for kiosk operations"""
-    user_id: str
-    kiosk_id: str
-    kiosk_owner_cap_id: Optional[str]
-    sync_status: str
-    last_synced_at: datetime
-    created_at: datetime
-
-class KioskCreateRequest(BaseModel):
-    """Request model for kiosk creation"""
-    wallet_address: str
-
-@router.post("/kiosk/create", response_model=KioskResponse)
-async def create_kiosk(
-    request: KioskCreateRequest,
-    db: Session = Depends(get_db)
-):
-    """
-    Create a kiosk for a user if they don't have one
-    This endpoint handles the automatic kiosk creation process
-    """
-    try:
-        # Find user by wallet address
-        user = db.query(User).filter(User.wallet_address == request.wallet_address).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Check if user already has a kiosk
-        existing_kiosk = db.query(UserKioskMap).filter(UserKioskMap.user_id == user.id).first()
-        if existing_kiosk:
-            return KioskResponse(
-                user_id=str(user.id),
-                kiosk_id=existing_kiosk.kiosk_id,
-                kiosk_owner_cap_id=existing_kiosk.kiosk_owner_cap_id,
-                sync_status=existing_kiosk.sync_status,
-                last_synced_at=existing_kiosk.last_synced_at,
-                created_at=existing_kiosk.created_at
-            )
-        
-        # TODO: In a real implementation, this would call the Sui blockchain
-        # to create the kiosk and get the kiosk_id and cap_id
-        # For now, we'll simulate the creation
-        import uuid
-        kiosk_id = f"0x{uuid.uuid4().hex}"  # Simulated kiosk ID
-        cap_id = f"0x{uuid.uuid4().hex}"  # Simulated cap ID
-        
-        # Create kiosk mapping in database
-        kiosk_map = UserKioskMap(
-            user_id=user.id,
-            kiosk_id=kiosk_id,
-            kiosk_owner_cap_id=cap_id,
-            sync_status="synced",
-            last_synced_at=datetime.utcnow()
-        )
-        
-        db.add(kiosk_map)
-        db.commit()
-        db.refresh(kiosk_map)
-        
-        return KioskResponse(
-            user_id=str(user.id),
-            kiosk_id=kiosk_map.kiosk_id,
-            kiosk_owner_cap_id=kiosk_map.kiosk_owner_cap_id,
-            sync_status=kiosk_map.sync_status,
-            last_synced_at=kiosk_map.last_synced_at,
-            created_at=kiosk_map.created_at
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error creating kiosk: {str(e)}")
-
-@router.get("/kiosk/user/{wallet_address}", response_model=KioskResponse)
-async def get_user_kiosk(
-    wallet_address: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Get user's kiosk information
-    """
-    try:
-        # Find user by wallet address
-        user = db.query(User).filter(User.wallet_address == wallet_address).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Get kiosk mapping
-        kiosk_map = db.query(UserKioskMap).filter(UserKioskMap.user_id == user.id).first()
-        if not kiosk_map:
-            raise HTTPException(status_code=404, detail="Kiosk not found for user")
-        
-        return KioskResponse(
-            user_id=str(user.id),
-            kiosk_id=kiosk_map.kiosk_id,
-            kiosk_owner_cap_id=kiosk_map.kiosk_owner_cap_id,
-            sync_status=kiosk_map.sync_status,
-            last_synced_at=kiosk_map.last_synced_at,
-            created_at=kiosk_map.created_at
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error getting kiosk: {str(e)}")
-
-@router.post("/kiosk/check-ownership")
-async def check_kiosk_ownership(
-    wallet_address: str,
-    kiosk_id: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Check if a user owns a specific kiosk
-    """
-    try:
-        # Find user by wallet address
-        user = db.query(User).filter(User.wallet_address == wallet_address).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Check kiosk ownership in database
-        kiosk_map = db.query(UserKioskMap).filter(
-            UserKioskMap.user_id == user.id,
-            UserKioskMap.kiosk_id == kiosk_id
-        ).first()
-        
-        if not kiosk_map:
-            return {"owns_kiosk": False, "message": "User does not own this kiosk"}
-        
-        return {
-            "owns_kiosk": True,
-            "kiosk_id": kiosk_map.kiosk_id,
-            "sync_status": kiosk_map.sync_status
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error checking kiosk ownership: {str(e)}")

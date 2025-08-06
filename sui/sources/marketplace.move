@@ -361,7 +361,7 @@ module fraudguard::marketplace {
 
         // Clear and update tags
         metadata.tags = std::vector::empty();
-        let mut i = 0;
+        let mut i = 0;      
         while (i < std::vector::length(&tags)) {
             let tag = std::vector::borrow(&tags, i);
             std::vector::push_back(&mut metadata.tags, string::utf8(*tag));

@@ -390,7 +390,7 @@ export default function CreateNft() {
                 title: "NFT created successfully! 🎉",
                 description: (
                   <div className="flex items-center gap-2">
-                    <span>Your NFT has been minted and automatically listed in marketplace</span>
+                    <span>Your NFT has been minted and is ready for listing in marketplace</span>
                     <a 
                       href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
                       target="_blank"
@@ -430,7 +430,7 @@ export default function CreateNft() {
                 title: "NFT minted successfully! 🎉",
                 description: (
                   <div className="flex items-center gap-2">
-                    <span>Your NFT has been minted and will be automatically listed in marketplace</span>
+                    <span>Your NFT has been minted and is ready for listing in marketplace</span>
                     <a 
                       href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
                       target="_blank"

@@ -115,23 +115,6 @@ export function createMintNFTTransaction(
 }
 
 /**
- * Create kiosk transaction
- */
-export function createKioskTransaction(): Transaction {
-  const tx = new Transaction();
-  
-  const [kiosk, kioskCap] = tx.moveCall({
-    target: '0x2::kiosk::new',
-    arguments: [],
-  });
-  
-  // Share the kiosk
-  tx.transferObjects([kiosk], tx.pure.address('0x2'));
-  
-  return tx;
-}
-
-/**
  * Get NFT events from transaction
  */
 export async function getNFTEvents(client: SuiClient, digest: string) {

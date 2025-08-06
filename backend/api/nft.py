@@ -62,10 +62,10 @@ except ImportError:
 
 # Import database models
 try:
-    from models.database import User, NFT, Base, UserKioskMap, Listing, FraudFlag
+    from models.database import User, NFT, Base, Listing, FraudFlag, ListingHistory
 except ImportError:
     try:
-        from backend.models.database import User, NFT, Base, UserKioskMap, Listing, FraudFlag
+        from backend.models.database import User, NFT, Base, Listing, FraudFlag, ListingHistory
     except ImportError:
         # Fallback models if import fails
         class User(Base):
@@ -107,19 +107,7 @@ except ImportError:
             listing_price = Column(DECIMAL(18, 8))
             last_listed_at = Column(DateTime)
             listing_id = Column(Text)
-            kiosk_id = Column(Text)
             listing_status = Column(Text, default="inactive")
-
-        class UserKioskMap(Base):
-            __tablename__ = "user_kiosk_map"
-            
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-            kiosk_id = Column(Text, nullable=False, unique=True)
-            kiosk_owner_cap_id = Column(Text)
-            sync_status = Column(Text, default="synced")
-            last_synced_at = Column(DateTime, default=datetime.utcnow)
-            created_at = Column(DateTime, default=datetime.utcnow)
 
         class Listing(Base):
             __tablename__ = "listings"
@@ -133,7 +121,6 @@ except ImportError:
             created_at = Column(DateTime, default=datetime.utcnow)
             
             # Phase 2: Enhanced Listing columns
-            kiosk_id = Column(Text)
             blockchain_tx_id = Column(Text)
             listing_id = Column(Text, unique=True)
             updated_at = Column(DateTime, default=datetime.utcnow)
@@ -450,28 +437,28 @@ async def confirm_nft_mint(
             }
         
         # Update NFT with Sui object ID and change status to minted
-        # AUTOMATICALLY LIST IN MARKETPLACE (restoring previous behavior)
+        # DEFAULT IS UNLISTED (changed from automatic listing)
         try:
             nft.sui_object_id = sui_object_id
             nft.status = "minted"
-            # Automatically list the NFT in marketplace when minted
-            nft.is_listed = True
-            nft.listing_price = nft.price
-            nft.last_listed_at = datetime.utcnow()
-            nft.listing_status = "active"
+            # NFT is unlisted by default when minted
+            nft.is_listed = False
+            nft.listing_price = None
+            nft.last_listed_at = None
+            nft.listing_status = "inactive"
             
             db.commit()
             db.refresh(nft)
             
-            logger.info(f"NFT mint confirmed and automatically listed: {nft_id} -> {sui_object_id}")
+            logger.info(f"NFT mint confirmed and set as unlisted by default: {nft_id} -> {sui_object_id}")
 
             return {
                 "success": True,
-                "message": "NFT mint confirmed and automatically listed in marketplace",
+                "message": "NFT mint confirmed and set as unlisted by default",
                 "nft_id": nft_id,
                 "sui_object_id": sui_object_id,
                 "status": "minted",
-                "is_listed": True,
+                "is_listed": False,
                 "fraud_analysis": {
                     "is_fraud": nft.is_fraud,
                     "confidence_score": float(nft.confidence_score or 0.0),
@@ -495,7 +482,6 @@ async def confirm_nft_mint(
         except:
             pass
         raise HTTPException(status_code=500, detail=f"Error confirming mint: {str(e)}")
-
 
 @router.get("/user/{wallet_address}")
 async def get_user_nfts(
@@ -1416,7 +1402,6 @@ class NFTListingResponse(BaseModel):
     listing_id: Optional[str] = None
     price: float
     status: str
-    kiosk_id: Optional[str] = None
     blockchain_tx_id: Optional[str] = None
     message: str
 
@@ -1429,7 +1414,6 @@ async def list_nft_for_sale(
 ):
     """
     List an NFT for sale on the marketplace
-    This endpoint handles the listing process including kiosk creation if needed
     """
     try:
         # Validate NFT exists and is owned by the user
@@ -1445,30 +1429,10 @@ async def list_nft_for_sale(
         if nft.status != "minted":
             raise HTTPException(status_code=400, detail="NFT must be minted before listing")
         
-        # Get or create user kiosk
+        # Get user
         user = db.query(User).filter(User.id == nft.owner_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="NFT owner not found")
-        
-        # Check if user has a kiosk
-        kiosk_map = db.query(UserKioskMap).filter(UserKioskMap.user_id == user.id).first()
-        
-        if not kiosk_map:
-            # Create kiosk for user
-            logger.info(f"Creating kiosk for user {user.wallet_address}")
-            kiosk_id = f"0x{uuid.uuid4().hex}"  # Simulated kiosk ID
-            cap_id = f"0x{uuid.uuid4().hex}"  # Simulated cap ID
-            
-            kiosk_map = UserKioskMap(
-                user_id=user.id,
-                kiosk_id=kiosk_id,
-                kiosk_owner_cap_id=cap_id,
-                sync_status="synced",
-                last_synced_at=datetime.utcnow()
-            )
-            db.add(kiosk_map)
-            db.commit()
-            db.refresh(kiosk_map)
         
         # Create listing record
         listing = Listing(
@@ -1477,8 +1441,7 @@ async def list_nft_for_sale(
             price=listing_data.price,
             expires_at=listing_data.expires_at,
             metadata=listing_data.metadata,
-            status="active",
-            kiosk_id=kiosk_map.kiosk_id
+            status="active"
         )
         
         db.add(listing)
@@ -1489,7 +1452,6 @@ async def list_nft_for_sale(
         nft.last_listed_at = datetime.utcnow()
         nft.listing_status = "active"
         nft.listing_id = str(listing.id)
-        nft.kiosk_id = kiosk_map.kiosk_id
         
         db.commit()
         db.refresh(listing)
@@ -1502,7 +1464,6 @@ async def list_nft_for_sale(
             listing_id=str(listing.id),
             price=listing_data.price,
             status="active",
-            kiosk_id=kiosk_map.kiosk_id,
             blockchain_tx_id=None,  # Will be set after blockchain sync
             message="NFT listed successfully"
         )
@@ -1562,7 +1523,6 @@ async def unlist_nft(
             listing_id=str(listing.id),
             price=float(listing.price),
             status="inactive",
-            kiosk_id=listing.kiosk_id,
             blockchain_tx_id=listing.blockchain_tx_id,
             message="NFT unlisted successfully"
         )
@@ -1608,7 +1568,6 @@ async def get_nft_listing_status(
             "listing_id": str(listing.id),
             "price": float(listing.price),
             "status": listing.status,
-            "kiosk_id": listing.kiosk_id,
             "blockchain_tx_id": listing.blockchain_tx_id,
             "created_at": listing.created_at,
             "expires_at": listing.expires_at,
@@ -1659,7 +1618,6 @@ async def get_user_listings(
                     "nft_image_url": nft.image_url,
                     "price": float(listing.price),
                     "status": listing.status,
-                    "kiosk_id": listing.kiosk_id,
                     "blockchain_tx_id": listing.blockchain_tx_id,
                     "created_at": listing.created_at,
                     "updated_at": listing.updated_at,
@@ -1784,7 +1742,7 @@ async def bulk_list_nfts(
                     })
                     continue
                 
-                # Get or create user kiosk
+                # Get user
                 user = db.query(User).filter(User.id == nft.owner_id).first()
                 if not user:
                     failed_listings.append({
@@ -1793,26 +1751,6 @@ async def bulk_list_nfts(
                     })
                     continue
                 
-                # Check if user has a kiosk
-                kiosk_map = db.query(UserKioskMap).filter(UserKioskMap.user_id == user.id).first()
-                
-                if not kiosk_map:
-                    # Create kiosk for user
-                    logger.info(f"Creating kiosk for user {user.wallet_address}")
-                    kiosk_id = f"0x{uuid.uuid4().hex}"  # Simulated kiosk ID
-                    cap_id = f"0x{uuid.uuid4().hex}"  # Simulated cap ID
-                    
-                    kiosk_map = UserKioskMap(
-                        user_id=user.id,
-                        kiosk_id=kiosk_id,
-                        kiosk_owner_cap_id=cap_id,
-                        sync_status="synced",
-                        last_synced_at=datetime.utcnow()
-                    )
-                    db.add(kiosk_map)
-                    db.commit()
-                    db.refresh(kiosk_map)
-                
                 # Create listing record
                 listing = Listing(
                     nft_id=nft.id,
@@ -1820,8 +1758,7 @@ async def bulk_list_nfts(
                     price=bulk_request.price,
                     expires_at=bulk_request.expires_at,
                     metadata=bulk_request.metadata,
-                    status="active",
-                    kiosk_id=kiosk_map.kiosk_id
+                    status="active"
                 )
                 
                 db.add(listing)
@@ -1832,7 +1769,6 @@ async def bulk_list_nfts(
                 nft.last_listed_at = datetime.utcnow()
                 nft.listing_status = "active"
                 nft.listing_id = str(listing.id)
-                nft.kiosk_id = kiosk_map.kiosk_id
                 
                 db.commit()
                 db.refresh(listing)
@@ -1844,8 +1780,7 @@ async def bulk_list_nfts(
                     "nft_id": nft_id,
                     "listing_id": str(listing.id),
                     "price": bulk_request.price,
-                    "status": "active",
-                    "kiosk_id": kiosk_map.kiosk_id
+                    "status": "active"
                 })
                 
             except Exception as e:
@@ -1916,7 +1851,6 @@ async def update_nft_listing(
         listing.updated_at = datetime.utcnow()
         
         # Create history record
-        from models.database import ListingHistory
         history = ListingHistory(
             listing_id=listing.id,
             nft_id=listing.nft_id,
@@ -1924,7 +1858,6 @@ async def update_nft_listing(
             old_price=old_price,
             new_price=listing.price,
             seller_id=listing.seller_id,
-            kiosk_id=listing.kiosk_id,
             blockchain_tx_id=listing.blockchain_tx_id
         )
         
@@ -1940,7 +1873,6 @@ async def update_nft_listing(
             listing_id=str(listing.id),
             price=float(listing.price),
             status="active",
-            kiosk_id=listing.kiosk_id,
             blockchain_tx_id=listing.blockchain_tx_id,
             message="NFT listing updated successfully"
         )
@@ -2062,14 +1994,10 @@ async def auto_relist_nft(
         if nft.status != "minted":
             raise HTTPException(status_code=400, detail="NFT must be minted before listing")
         
-        # Get user kiosk
+        # Get user
         user = db.query(User).filter(User.id == nft.owner_id).first()
         if not user:
             raise HTTPException(status_code=404, detail="NFT owner not found")
-        
-        kiosk_map = db.query(UserKioskMap).filter(UserKioskMap.user_id == user.id).first()
-        if not kiosk_map:
-            raise HTTPException(status_code=400, detail="User does not have a kiosk")
         
         # Create new listing
         listing = Listing(
@@ -2078,8 +2006,7 @@ async def auto_relist_nft(
             price=relist_data.price,
             expires_at=relist_data.expires_at,
             metadata=relist_data.metadata,
-            status="active",
-            kiosk_id=kiosk_map.kiosk_id
+            status="active"
         )
         
         db.add(listing)
@@ -2090,7 +2017,6 @@ async def auto_relist_nft(
         nft.last_listed_at = datetime.utcnow()
         nft.listing_status = "active"
         nft.listing_id = str(listing.id)
-        nft.kiosk_id = kiosk_map.kiosk_id
         
         db.commit()
         db.refresh(listing)
@@ -2103,7 +2029,6 @@ async def auto_relist_nft(
             listing_id=str(listing.id),
             price=relist_data.price,
             status="active",
-            kiosk_id=kiosk_map.kiosk_id,
             blockchain_tx_id=None,
             message="NFT auto-relisted successfully"
         )
@@ -2133,7 +2058,6 @@ async def get_nft_listing_history(
             raise HTTPException(status_code=404, detail="NFT not found")
         
         # Get listing history
-        from models.database import ListingHistory
         history = db.query(ListingHistory).filter(
             ListingHistory.nft_id == nft.id
         ).order_by(ListingHistory.timestamp.desc()).offset(offset).limit(limit).all()
@@ -2147,7 +2071,6 @@ async def get_nft_listing_history(
                     "old_price": float(record.old_price) if record.old_price else None,
                     "new_price": float(record.new_price) if record.new_price else None,
                     "seller_id": str(record.seller_id),
-                    "kiosk_id": record.kiosk_id,
                     "blockchain_tx_id": record.blockchain_tx_id,
                     "timestamp": record.timestamp
                 })

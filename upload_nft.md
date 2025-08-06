@@ -1,10 +1,10 @@
-# 🧠 NFT Marketplace with Fraud Detection (Sui + FastAPI + Supabase + Walrus + Kiosk)
+# 🧠 NFT Marketplace with Fraud Detection (Sui + FastAPI + Supabase + Walrus)
 
 This project is a decentralized NFT marketplace (like Shopee) where users can:
 - Log in with **zkLogin (Google)**
 - Upload and mint NFTs
 - Run **AI-based fraud detection** on images
-- List NFTs for sale via **Sui Kiosk**
+- List NFTs for sale via marketplace
 - Buy NFTs directly using on-chain logic
 
 ---
@@ -14,7 +14,7 @@ This project is a decentralized NFT marketplace (like Shopee) where users can:
 | Component     | Description |
 |---------------|-------------|
 | **Sui**       | Blockchain for NFTs, ownership, and trading |
-| **Sui Kiosk** | On-chain marketplace for listing/buying NFTs |
+| **Marketplace** | On-chain marketplace for listing/buying NFTs |
 | **FastAPI**   | Backend logic for upload, fraud detection, minting |
 | **Walrus**    | S3-compatible storage for NFT images and metadata |
 | **Supabase**  | PostgreSQL + pgvector for metadata, user data, fraud results |
@@ -83,10 +83,10 @@ status = minted
 
 sui_object_id added
 
-6. 🛒 List NFT for Sale (Kiosk)
+6. 🛒 List NFT for Sale
 Frontend uses wallet adapter to:
 
-Sign transaction to kiosk::place(nft, price)
+Sign transaction to list NFT for sale
 
 NFT is listed in user’s kiosk
 
@@ -97,7 +97,7 @@ Buyer browses listed NFTs (via Supabase query)
 
 Wallet signs:
 
-kiosk::purchase(listing_id)
+purchase_nft(listing_id)
 
 Ownership is transferred on-chain
 

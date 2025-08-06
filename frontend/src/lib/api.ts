@@ -127,26 +127,7 @@ export interface ConfirmMintResponse {
   sui_object_id: string;
 }
 
-// Phase 1.1: Kiosk Management Interfaces
-export interface KioskResponse {
-  user_id: string;
-  kiosk_id: string;
-  kiosk_owner_cap_id?: string;
-  sync_status: string;
-  last_synced_at: string;
-  created_at: string;
-}
-
-export interface KioskCreateRequest {
-  wallet_address: string;
-}
-
-export interface KioskOwnershipResponse {
-  owns_kiosk: boolean;
-  kiosk_id?: string;
-  sync_status?: string;
-  message?: string;
-}
+// Phase 1.1: Basic NFT Management Interfaces
 
 export interface MarketplaceResponse {
   nfts: NFT[];
@@ -270,50 +251,7 @@ export async function getSimilarNFTs(nftId: string, limit: number = 5): Promise<
   return response.json();
 }
 
-// Phase 1.1: Kiosk Management API Functions
-export async function createKiosk(walletAddress: string): Promise<KioskResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/marketplace/kiosk/create`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ wallet_address: walletAddress }),
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to create kiosk');
-  }
-  return response.json();
-}
 
-export async function getUserKiosk(walletAddress: string): Promise<KioskResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/marketplace/kiosk/user/${walletAddress}`);
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to get user kiosk');
-  }
-  return response.json();
-}
-
-export async function checkKioskOwnership(walletAddress: string, kioskId: string): Promise<KioskOwnershipResponse> {
-  const response = await fetch(`${API_BASE_URL}/api/marketplace/kiosk/check-ownership`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ 
-      wallet_address: walletAddress,
-      kiosk_id: kioskId 
-    }),
-  });
-  
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.detail || 'Failed to check kiosk ownership');
-  }
-  return response.json();
-}
 
 // Phase 4: Listing Management Interfaces
 export interface Listing {
@@ -322,7 +260,6 @@ export interface Listing {
   seller_id: string;
   price: number;
   status: string;
-  kiosk_id?: string;
   listing_id?: string;
   blockchain_tx_id?: string;
   created_at: string;
@@ -356,7 +293,6 @@ export interface ListingHistory {
   old_price?: number;
   new_price?: number;
   seller_id: string;
-  kiosk_id?: string;
   blockchain_tx_id?: string;
   timestamp: string;
 }
