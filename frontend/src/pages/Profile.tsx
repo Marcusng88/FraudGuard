@@ -17,15 +17,22 @@ import {
   Plus,
   DollarSign,
   Clock,
-  Eye
+  Eye,
+  Edit,
+  Trash2,
+  Loader2
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
 import { ListingManager } from '@/components/ListingManager';
-import { useUserListings, useMarketplaceAnalytics } from '@/hooks/useListings';
+import { MyNFTs } from '@/components/MyNFTs';
+import { useUserListings, useMarketplaceAnalytics, useUpdateListing, useDeleteListing, useUnlistNFT } from '@/hooks/useListings';
+import { useNavigate } from 'react-router-dom';
+import { EditListingDialog } from '@/components/EditListingDialog';
 
 const Profile = () => {
   const { wallet, disconnect, connect } = useWallet();
   const [activeTab, setActiveTab] = useState('overview');
+  const navigate = useNavigate();
 
   // Fetch user's listings
   const { data: userListings } = useUserListings(wallet?.address || '');
@@ -33,12 +40,47 @@ const Profile = () => {
   // Fetch marketplace analytics
   const { data: analytics } = useMarketplaceAnalytics('24h');
 
+  // Listing mutations
+  const updateListingMutation = useUpdateListing();
+  const deleteListingMutation = useDeleteListing();
+  const unlistNFTMutation = useUnlistNFT();
+
   const formatAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
   const formatBalance = (balance: number) => {
     return `${balance.toFixed(2)} SUI`;
+  };
+
+  const handleViewNFT = (nftId: string) => {
+    navigate(`/nft/${nftId}`);
+  };
+
+  const handleEditListing = async (listingId: string, newPrice: number) => {
+    if (!wallet?.address) return;
+
+    try {
+      await updateListingMutation.mutateAsync({
+        listing_id: listingId,
+        price: newPrice
+      });
+    } catch (error) {
+      console.error('Failed to update listing:', error);
+    }
+  };
+
+  const handleUnlistNFT = async (nftId: string) => {
+    if (!wallet?.address) return;
+
+    try {
+      await unlistNFTMutation.mutateAsync({
+        nftId,
+        walletAddress: wallet.address
+      });
+    } catch (error) {
+      console.error('Failed to unlist NFT:', error);
+    }
   };
 
   if (!wallet?.address) {
@@ -100,7 +142,7 @@ const Profile = () => {
                   </Badge>
                 )}
                 
-                <Button variant="outline" size="sm" onClick={disconnect}>
+                <Button variant="outline" size="sm" onClick={disconnect} className="hover:text-white hover:bg-primary/20 hover:border-primary/50">
                   <LogOut className="w-4 h-4 mr-2" />
                   Disconnect
                 </Button>
@@ -114,26 +156,26 @@ const Profile = () => {
           {[
             {
               icon: Shield,
-              title: 'Verified NFTs',
+              title: 'Active Listings',
               value: userListings?.filter(l => l.status === 'active').length || 0,
               color: 'text-primary'
             },
             {
               icon: TrendingUp,
-              title: 'Active Listings',
-              value: userListings?.filter(l => l.status === 'active').length || 0,
+              title: 'Total Sales',
+              value: userListings?.filter(l => l.status === 'sold').length || 0,
               color: 'text-success'
             },
             {
               icon: Clock,
-              title: 'Total Sales',
-              value: 0, // TODO: Implement sales tracking
+              title: 'Total Volume',
+              value: `${userListings?.reduce((sum, l) => sum + l.price, 0) || 0} SUI`,
               color: 'text-secondary'
             },
             {
               icon: Eye,
               title: 'Profile Views',
-              value: 0, // TODO: Implement profile view tracking
+              value: analytics?.active_sellers || 0,
               color: 'text-muted-foreground'
             }
           ].map((stat, index) => {
@@ -155,7 +197,7 @@ const Profile = () => {
           <TabsList className="grid w-full grid-cols-4">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="listings">My Listings</TabsTrigger>
-            <TabsTrigger value="nfts">My NFTs</TabsTrigger>
+            <TabsTrigger value="nfts">My Collection</TabsTrigger>
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           
@@ -178,9 +220,19 @@ const Profile = () => {
                           Listed for {listing.price} SUI
                         </p>
                       </div>
-                      <Badge variant={listing.status === 'active' ? 'default' : 'secondary'}>
-                        {listing.status}
-                      </Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={listing.status === 'active' ? 'default' : 'secondary'}>
+                          {listing.status}
+                        </Badge>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleViewNFT(listing.nft_id)}
+                          className="hover:text-white hover:bg-primary/20 hover:border-primary/50"
+                        >
+                          <Eye className="w-4 h-4" />
+                        </Button>
+                      </div>
                     </div>
                   ))}
                   
@@ -226,25 +278,15 @@ const Profile = () => {
           </TabsContent>
           
           <TabsContent value="listings">
-            <ListingManager />
+            <EnhancedListingManager 
+              onViewNFT={handleViewNFT}
+              onEditListing={handleEditListing}
+              onUnlistNFT={handleUnlistNFT}
+            />
           </TabsContent>
           
           <TabsContent value="nfts">
-            <Card className="glass-panel p-6">
-              <div className="text-center py-12">
-                <div className="w-16 h-16 bg-muted/20 rounded-full flex items-center justify-center mx-auto mb-4">
-                  <Plus className="w-8 h-8 text-muted-foreground" />
-                </div>
-                <h3 className="text-lg font-semibold text-foreground mb-2">My NFTs</h3>
-                <p className="text-muted-foreground mb-4">
-                  View and manage your NFT collection
-                </p>
-                <Button>
-                  <Plus className="w-4 h-4 mr-2" />
-                  Create NFT
-                </Button>
-              </div>
-            </Card>
+            <MyNFTs />
           </TabsContent>
           
           <TabsContent value="settings">
@@ -256,7 +298,7 @@ const Profile = () => {
                     <Settings className="w-5 h-5 text-muted-foreground" />
                     <span className="text-foreground">Profile Settings</span>
                   </div>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="hover:text-white hover:bg-primary/20 hover:border-primary/50">
                     Edit
                   </Button>
                 </div>
@@ -266,7 +308,7 @@ const Profile = () => {
                     <Shield className="w-5 h-5 text-muted-foreground" />
                     <span className="text-foreground">Security Settings</span>
                   </div>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="hover:text-white hover:bg-primary/20 hover:border-primary/50">
                     Configure
                   </Button>
                 </div>
@@ -276,7 +318,7 @@ const Profile = () => {
                     <AlertTriangle className="w-5 h-5 text-muted-foreground" />
                     <span className="text-foreground">Notification Preferences</span>
                   </div>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" className="hover:text-white hover:bg-primary/20 hover:border-primary/50">
                     Manage
                   </Button>
                 </div>
@@ -285,6 +327,120 @@ const Profile = () => {
           </TabsContent>
         </Tabs>
       </div>
+    </div>
+  );
+};
+
+// Enhanced Listing Manager Component
+const EnhancedListingManager = ({ 
+  onViewNFT, 
+  onEditListing, 
+  onUnlistNFT 
+}: {
+  onViewNFT: (nftId: string) => void;
+  onEditListing: (listingId: string, newPrice: number) => void;
+  onUnlistNFT: (nftId: string) => void;
+}) => {
+  const { wallet } = useWallet();
+  const navigate = useNavigate();
+
+  const { data: userListings, isLoading } = useUserListings(wallet?.address || '');
+
+  const handleEditSuccess = () => {
+    // Refetch listings after successful edit
+    // The mutation will automatically invalidate queries
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <span className="ml-2 text-muted-foreground">Loading your listings...</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-foreground">My Listings</h2>
+          <p className="text-muted-foreground">
+            Manage your NFT listings and track their performance
+          </p>
+        </div>
+      </div>
+
+      {userListings && userListings.length > 0 ? (
+        <div className="grid gap-4">
+          {userListings.map((listing) => (
+            <Card key={listing.id} className="p-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                  <img 
+                    src={listing.nft_image_url || '/placeholder-nft.png'} 
+                    alt={listing.nft_title || 'NFT'}
+                    className="w-16 h-16 object-cover rounded"
+                  />
+                  <div>
+                    <h3 className="font-semibold text-foreground">
+                      {listing.nft_title || 'Untitled NFT'}
+                    </h3>
+                    <p className="text-sm text-muted-foreground">
+                      Listed for {listing.price} SUI
+                    </p>
+                    <Badge variant={listing.status === 'active' ? 'default' : 'secondary'}>
+                      {listing.status}
+                    </Badge>
+                  </div>
+                </div>
+                
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onViewNFT(listing.nft_id)}
+                    className="hover:text-white hover:bg-primary/20 hover:border-primary/50"
+                  >
+                    <Eye className="w-4 h-4 mr-1" />
+                    View
+                  </Button>
+                  
+                  {listing.status === 'active' && (
+                    <>
+                      <EditListingDialog 
+                        listing={listing}
+                        onSuccess={handleEditSuccess}
+                      />
+                      
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => onUnlistNFT(listing.nft_id)}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Unlist
+                      </Button>
+                    </>
+                  )}
+                </div>
+              </div>
+            </Card>
+          ))}
+        </div>
+      ) : (
+        <div className="text-center py-12">
+          <TrendingUp className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-foreground mb-2">No Listings Yet</h3>
+          <p className="text-muted-foreground mb-4">
+            You haven't created any listings yet. List your NFTs to start selling.
+          </p>
+          <Button onClick={() => navigate('/create')}>
+            <Plus className="w-4 h-4 mr-2" />
+            Create Your First NFT
+          </Button>
+        </div>
+      )}
     </div>
   );
 };

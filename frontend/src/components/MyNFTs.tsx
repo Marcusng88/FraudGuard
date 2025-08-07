@@ -19,56 +19,26 @@ import {
   ImageIcon,
   AlertTriangle,
   CheckCircle,
-  Clock,
-  Trash2,
-  ShoppingCart,
-  BarChart3
+  Clock
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
-import { useUserNFTs, useCreateListing, useUpdateListing, useDeleteListing, useUnlistNFT, useUserListings } from '@/hooks/useListings';
+import { useUserNFTs, useCreateListing } from '@/hooks/useListings';
+import { useNavigate } from 'react-router-dom';
+import { NFT } from '@/lib/api';
 
-interface NFT {
-  id: string;
-  title: string;
-  description?: string;
-  image_url: string;
-  price?: number; // Make price optional to match API interface
-  is_listed?: boolean; // Make is_listed optional to match API interface
-  status: string;
-  is_fraud: boolean;
-  confidence_score: number;
-  flag_type?: number; // Change to number to match API interface
-  created_at: string;
-  sui_object_id?: string;
-}
-
-interface NFTData {
-  nfts: NFT[];
-  total: number;
-}
-
-export function ListingManager() {
+export function MyNFTs() {
   const { wallet } = useWallet();
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'listed' | 'unlisted' | 'flagged'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [selectedNFT, setSelectedNFT] = useState<NFT | null>(null);
   const [listingPrice, setListingPrice] = useState('');
   const [isListingDialogOpen, setIsListingDialogOpen] = useState(false);
-  const [editingNFT, setEditingNFT] = useState<NFT | null>(null);
-  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 
   // Fetch user's NFTs
   const { data: nftsData, isLoading, refetch } = useUserNFTs(wallet?.address || '');
-  
-  // Fetch user's listings for additional context
-  const { data: userListings } = useUserListings(wallet?.address || '');
-
-  // Listing mutations
   const createListingMutation = useCreateListing();
-  const updateListingMutation = useUpdateListing();
-  const deleteListingMutation = useDeleteListing();
-  const unlistNFTMutation = useUnlistNFT();
 
   // Extract NFTs from the response structure
   const nfts: NFT[] = nftsData?.nfts || [];
@@ -81,10 +51,10 @@ export function ListingManager() {
     let matchesFilter = true;
     switch (filterStatus) {
       case 'listed':
-        matchesFilter = nft.is_listed === true;
+        matchesFilter = nft.is_listed;
         break;
       case 'unlisted':
-        matchesFilter = nft.is_listed !== true;
+        matchesFilter = !nft.is_listed;
         break;
       case 'flagged':
         matchesFilter = nft.is_fraud || nft.confidence_score > 0.7;
@@ -96,78 +66,39 @@ export function ListingManager() {
     return matchesSearch && matchesFilter;
   });
 
-  // Statistics
-  const totalNFTs = nfts.length;
-  const listedNFTs = nfts.filter(n => n.is_listed === true).length;
-  const flaggedNFTs = nfts.filter(n => n.is_fraud || n.confidence_score > 0.7).length;
-  const totalListingValue = userListings?.reduce((sum, l) => sum + l.price, 0) || 0;
-
   const handleListNFT = async () => {
     if (!selectedNFT || !listingPrice) return;
 
-    console.log('Attempting to list NFT:', selectedNFT.id, 'with price:', listingPrice);
-
     try {
-      const result = await createListingMutation.mutateAsync({
+      await createListingMutation.mutateAsync({
         nft_id: selectedNFT.id,
         price: parseFloat(listingPrice)
       });
       
-      console.log('Listing created successfully:', result);
-      
       setIsListingDialogOpen(false);
       setSelectedNFT(null);
       setListingPrice('');
-      // The mutation will automatically invalidate queries and trigger refetch
-      // The NFT should now appear in the "Listed" filter instead of "Unlisted"
+      refetch(); // Refresh NFTs to update listing status
     } catch (error) {
       console.error('Failed to list NFT:', error);
-      // You might want to show a toast notification here
     }
   };
 
-  const handleUnlistNFT = async (nft: NFT) => {
-    if (!wallet?.address) {
-      console.error('No wallet address available');
-      return;
-    }
-
-    console.log('Attempting to unlist NFT:', nft.id);
-    console.log('Current NFT state:', nft);
-    console.log('Wallet address:', wallet.address);
-
-    try {
-      const result = await unlistNFTMutation.mutateAsync({ 
-        nftId: nft.id, 
-        walletAddress: wallet.address 
-      });
-      console.log('Unlist result:', result);
-      
-      // Force refetch the data immediately
-      await refetch();
-      
-      // Also invalidate the cache to ensure fresh data
-      setTimeout(() => {
-        refetch();
-      }, 1000);
-      
-      // The mutation will automatically invalidate queries and trigger refetch
-      // The NFT's is_listed status will be updated to false in the database
-      // The NFT should now appear in the "Unlisted" filter instead of "Listed"
-    } catch (error) {
-      console.error('Failed to unlist NFT:', error);
-      // You might want to show a toast notification here
-    }
+  const handleViewNFT = (nftId: string) => {
+    navigate(`/nft/${nftId}`);
   };
 
   const getStatusBadge = (nft: NFT) => {
     if (nft.is_fraud || nft.confidence_score > 0.7) {
       return <Badge variant="destructive" className="text-xs">Flagged</Badge>;
     }
-    if (nft.is_listed === true) {
+    if (nft.is_listed) {
       return <Badge variant="default" className="text-xs">Listed</Badge>;
     }
-    return <Badge variant="secondary" className="text-xs">Available</Badge>;
+    if (nft.status === 'minted') {
+      return <Badge variant="secondary" className="text-xs">Available</Badge>;
+    }
+    return <Badge variant="outline" className="text-xs">{nft.status}</Badge>;
   };
 
   const formatDate = (dateString: string) => {
@@ -185,83 +116,17 @@ export function ListingManager() {
 
   return (
     <div className="space-y-6">
-      {/* Info Card */}
-      <Card className="p-4 bg-gradient-to-r from-primary/5 to-secondary/5 border-primary/20">
-        <div className="flex items-start gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg">
-            <ShoppingCart className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h3 className="font-semibold text-foreground mb-1">My NFT Collection & Listings</h3>
-            <p className="text-sm text-muted-foreground">
-              View and manage all your uploaded NFTs. List unlisted items for sale, unlist active listings, or view detailed information.
-            </p>
-          </div>
-        </div>
-      </Card>
-
-      {/* Statistics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-primary/10 rounded-lg">
-              <ImageIcon className="w-5 h-5 text-primary" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Total NFTs</p>
-              <p className="text-xl font-bold">{totalNFTs}</p>
-            </div>
-          </div>
-        </Card>
-        
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-green-500/10 rounded-lg">
-              <CheckCircle className="w-5 h-5 text-green-500" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Listed</p>
-              <p className="text-xl font-bold">{listedNFTs}</p>
-            </div>
-          </div>
-        </Card>
-        
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-yellow-500/10 rounded-lg">
-              <AlertTriangle className="w-5 h-5 text-yellow-500" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Flagged</p>
-              <p className="text-xl font-bold">{flaggedNFTs}</p>
-            </div>
-          </div>
-        </Card>
-        
-        <Card className="p-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-secondary/10 rounded-lg">
-              <DollarSign className="w-5 h-5 text-secondary" />
-            </div>
-            <div>
-              <p className="text-sm text-muted-foreground">Listing Value</p>
-              <p className="text-xl font-bold">{totalListingValue.toFixed(2)} SUI</p>
-            </div>
-          </div>
-        </Card>
-      </div>
-
       {/* Header */}
       <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-foreground">My Listings</h2>
+          <h2 className="text-2xl font-bold text-foreground">My NFTs</h2>
           <p className="text-muted-foreground">
             {nfts.length} NFT{nfts.length !== 1 ? 's' : ''} in your collection
           </p>
         </div>
         
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => window.location.href = '/create'}>
+          <Button variant="outline" size="sm" onClick={() => navigate('/create')}>
             <Plus className="w-4 h-4 mr-2" />
             Create NFT
           </Button>
@@ -339,7 +204,7 @@ export function ListingManager() {
             }
           </p>
           {!searchTerm && filterStatus === 'all' && (
-            <Button onClick={() => window.location.href = '/create'}>
+            <Button onClick={() => navigate('/create')}>
               <Plus className="w-4 h-4 mr-2" />
               Create Your First NFT
             </Button>
@@ -386,28 +251,32 @@ export function ListingManager() {
                     <Calendar className="w-4 h-4 text-muted-foreground" />
                     <span className="text-muted-foreground">{formatDate(nft.created_at)}</span>
                   </div>
-                  {nft.price > 0 && (
+                  {nft.initial_price > 0 && (
                     <div className="flex items-center gap-1">
                       <DollarSign className="w-4 h-4 text-primary" />
-                      <span className="font-medium">{nft.price} SUI</span>
+                      <span className="font-medium">{nft.initial_price} SUI</span>
                     </div>
                   )}
                 </div>
 
                 {/* Action Buttons */}
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="flex-1"
+                    onClick={() => handleViewNFT(nft.id)}
+                  >
                     <Eye className="w-4 h-4 mr-1" />
                     View
                   </Button>
-
                   {!nft.is_listed && (
                     <Button 
                       size="sm" 
                       className="flex-1"
                       onClick={() => {
                         setSelectedNFT(nft);
-                        setListingPrice(nft.price?.toString() || '');
+                        setListingPrice((nft.initial_price || 0).toString());
                         setIsListingDialogOpen(true);
                       }}
                     >
@@ -415,20 +284,10 @@ export function ListingManager() {
                       List
                     </Button>
                   )}
-                  {nft.is_listed === true && (
-                    <Button 
-                      variant="secondary" 
-                      size="sm" 
-                      className="flex-1"
-                      onClick={() => handleUnlistNFT(nft)}
-                      disabled={unlistNFTMutation.isPending}
-                    >
-                      {unlistNFTMutation.isPending ? (
-                        <Loader2 className="w-4 h-4 mr-1 animate-spin" />
-                      ) : (
-                        <Trash2 className="w-4 h-4 mr-1" />
-                      )}
-                      {unlistNFTMutation.isPending ? 'Unlisting...' : 'Unlist'}
+                  {nft.is_listed && (
+                    <Button variant="secondary" size="sm" className="flex-1">
+                      <CheckCircle className="w-4 h-4 mr-1" />
+                      Listed
                     </Button>
                   )}
                 </div>
@@ -500,4 +359,4 @@ export function ListingManager() {
       </Dialog>
     </div>
   );
-} 
+}

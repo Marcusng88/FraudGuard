@@ -4,10 +4,11 @@ Central location for all SQLAlchemy model definitions
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Text, Boolean, Integer, DateTime, ForeignKey, Float
+from sqlalchemy import Column, String, Text, Boolean, Integer, DateTime, ForeignKey, Float, Numeric
 from sqlalchemy.types import DECIMAL
-from sqlalchemy.dialects.postgresql import UUID, JSON
+from sqlalchemy.dialects.postgresql import UUID, JSON, JSONB
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import Session
 
 # Import pgvector for vector support
 try:
@@ -26,151 +27,113 @@ class User(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     wallet_address = Column(Text, unique=True, nullable=False)
-    email = Column(Text, unique=True, nullable=False)
-    username = Column(Text, nullable=False)
-    avatar_url = Column(Text)
-    bio = Column(Text)
-    reputation_score = Column(Float, default=0.0)
+    username = Column(Text, nullable=True)
+    bio = Column(Text, nullable=True)
+    email = Column(Text, nullable=True)
+    reputation_score = Column(Numeric, default=0.00)
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
 
 class NFT(Base):
     __tablename__ = "nfts"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    wallet_address = Column(Text, nullable=False)
+    sui_object_id = Column(Text, unique=True, nullable=True)  # Changed to nullable=True - set after minting
+    creator_wallet_address = Column(Text, nullable=False)
+    owner_wallet_address = Column(Text, nullable=False)
     title = Column(Text, nullable=False)
-    description = Column(Text)
-    category = Column(Text, nullable=False)
-    price = Column(DECIMAL(18, 8), nullable=False)
+    description = Column(Text, nullable=True)
     image_url = Column(Text, nullable=False)
-    sui_object_id = Column(Text, unique=True)
-    embedding_vector = Column(Vector(768))  # pgvector vector type for embeddings
-    is_fraud = Column(Boolean, default=False)
-    confidence_score = Column(Float, default=0.0)
-    flag_type = Column(Integer)
-    reason = Column(Text)
-    evidence_url = Column(Text)
-    analysis_details = Column(JSON)  # JSONB type for analysis details
-    status = Column(Text, default="pending")
+    metadata_url = Column(Text, nullable=True)
+    attributes = Column(JSONB, nullable=True)
+    category = Column(Text, nullable=True)
+    initial_price = Column(Numeric, nullable=True)
+    is_listed = Column(Boolean, default=False, nullable=False)
+    embedding_vector = Column(Vector(768), nullable=True)  # pgvector vector type for embeddings
+    analysis_details = Column(JSONB, nullable=True)  # JSONB type for analysis details
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow)
     
-    # Phase 2: Enhanced NFT columns
-    is_listed = Column(Boolean, default=False)
-    listing_price = Column(DECIMAL(18, 8))
-    last_listed_at = Column(DateTime)
-    listing_id = Column(Text)
-    kiosk_id = Column(Text)
-    listing_status = Column(Text, default="inactive")
+    @classmethod
+    def find_similar_nfts(cls, db: Session, target_embedding, similarity_threshold: float = 0.8, limit_count: int = 10):
+        """
+        Find NFTs similar to the given embedding vector using the Supabase function.
+        
+        Args:
+            db: Database session
+            target_embedding: Vector embedding to compare against
+            similarity_threshold: Minimum similarity score (0-1, default 0.8)
+            limit_count: Maximum number of results (default 10)
+            
+        Returns:
+            List of tuples: (nft_id, title, similarity_score)
+        """
+        query = f"""
+        SELECT * FROM find_similar_nfts(
+            '{target_embedding}'::vector,
+            {similarity_threshold},
+            {limit_count}
+        )
+        """
+        result = db.execute(query)
+        return result.fetchall()
+    
+    @classmethod
+    def find_similar_by_nft_id(cls, db: Session, nft_id: str, similarity_threshold: float = 0.8, limit_count: int = 10):
+        """
+        Find NFTs similar to a specific NFT by its ID.
+        
+        Args:
+            db: Database session
+            nft_id: UUID of the NFT to find similar ones for
+            similarity_threshold: Minimum similarity score (0-1, default 0.8)
+            limit_count: Maximum number of results (default 10)
+            
+        Returns:
+            List of tuples: (nft_id, title, similarity_score)
+        """
+        # First get the embedding of the target NFT
+        target_nft = db.query(cls).filter(cls.id == nft_id).first()
+        if not target_nft or not target_nft.embedding_vector:
+            return []
+        
+        return cls.find_similar_nfts(db, target_nft.embedding_vector, similarity_threshold, limit_count)
 
 class Listing(Base):
     __tablename__ = "listings"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=False)
-    seller_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    price = Column(DECIMAL(18, 8), nullable=False)
-    expires_at = Column(DateTime)
+    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=True)
+    seller_wallet_address = Column(Text, nullable=False)
+    price = Column(Numeric, nullable=False)
     status = Column(Text, default="active")
+    listing_metadata = Column(JSONB, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    # Phase 2: Enhanced Listing columns
-    kiosk_id = Column(Text)
-    blockchain_tx_id = Column(Text)
-    listing_id = Column(Text, unique=True)
     updated_at = Column(DateTime, default=datetime.utcnow)
-    listing_metadata = Column(JSON)  # JSONB type for listing metadata
-
-class FraudFlag(Base):
-    __tablename__ = "flags"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    reason = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-class UserKioskMap(Base):
-    __tablename__ = "user_kiosk_map"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    kiosk_id = Column(Text, nullable=False, unique=True)
-    kiosk_owner_cap_id = Column(Text)
-    sync_status = Column(Text, default="synced")
-    last_synced_at = Column(DateTime, default=datetime.utcnow)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-# Phase 2: Enhanced Models
-
-class ListingHistory(Base):
-    __tablename__ = "listing_history"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id"), nullable=False)
-    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=False)
-    action = Column(Text, nullable=False)  # 'created', 'updated', 'deleted', 'expired'
-    old_price = Column(DECIMAL(18, 8))
-    new_price = Column(DECIMAL(18, 8))
-    seller_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    kiosk_id = Column(Text)
-    blockchain_tx_id = Column(Text)
-    timestamp = Column(DateTime, default=datetime.utcnow)
+    expires_at = Column(DateTime, nullable=True)
 
 class TransactionHistory(Base):
     __tablename__ = "transaction_history"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=False)
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id"))
-    seller_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    buyer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    price = Column(DECIMAL(18, 8), nullable=False)
-    blockchain_tx_id = Column(Text, nullable=False)
-    transaction_type = Column(Text, nullable=False)  # 'purchase', 'listing', 'delisting', 'price_update'
+    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=True)
+    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id"), nullable=True)
+    seller_wallet_address = Column(Text, nullable=False)
+    buyer_wallet_address = Column(Text, nullable=False)
+    price = Column(Numeric, nullable=False)
+    transaction_type = Column(Text, nullable=False)  # 'mint', 'purchase', 'listing', 'unlisting', 'edit_listing'
+    blockchain_tx_id = Column(Text, nullable=True)
+    gas_fee = Column(Numeric, nullable=True)
     status = Column(Text, default="completed")
-    gas_fee = Column(DECIMAL(18, 8))
-    timestamp = Column(DateTime, default=datetime.utcnow)
-
-class MarketplaceAnalytics(Base):
-    __tablename__ = "marketplace_analytics"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    total_listings = Column(Integer, default=0)
-    total_volume = Column(DECIMAL(18, 8), default=0)
-    active_sellers = Column(Integer, default=0)
-    total_transactions = Column(Integer, default=0)
-    average_price = Column(DECIMAL(18, 8), default=0)
-    fraud_detection_rate = Column(Float, default=0.0)
-    last_updated = Column(DateTime, default=datetime.utcnow)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-class BlockchainEvent(Base):
-    __tablename__ = "blockchain_events"
+class UserReputationEvent(Base):
+    __tablename__ = "user_reputation_events"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    event_type = Column(Text, nullable=False)  # 'NFTListed', 'NFTUnlisted', 'NFTPurchased', 'KioskCreated', etc.
-    nft_id = Column(Text)
-    kiosk_id = Column(Text)
-    seller_address = Column(Text)
-    buyer_address = Column(Text)
-    price = Column(DECIMAL(18, 8))
-    listing_id = Column(Text)
-    blockchain_tx_id = Column(Text, nullable=False)
-    block_number = Column(Integer)
-    event_data = Column(JSON)  # JSONB type for event data
-    processed = Column(Boolean, default=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    event_type = Column(Text, nullable=False)  # 'fraud_detected', 'successful_sale', 'fraud_report', 'positive_review'
+    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=True)
+    points_change = Column(Integer, nullable=False)
+    reason = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-class UserActivity(Base):
-    __tablename__ = "user_activity"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    activity_type = Column(Text, nullable=False)  # 'login', 'nft_mint', 'listing_created', 'purchase', 'fraud_report'
-    nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"))
-    listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id"))
-    details = Column(JSON)  # JSONB type for activity details
-    ip_address = Column(Text)
-    user_agent = Column(Text)
-    timestamp = Column(DateTime, default=datetime.utcnow)

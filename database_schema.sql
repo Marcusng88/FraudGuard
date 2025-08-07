@@ -1,259 +1,187 @@
--- FraudGuard Database Schema
--- PostgreSQL database schema for NFT marketplace with fraud detection
+-- FraudGuard Database Schema for Supabase
+-- This schema supports wallet-based authentication, NFT marketplace, and fraud detection
 
--- Enable required extensions
+-- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS "pgvector";
+CREATE EXTENSION IF NOT EXISTS "vector";
 
--- ===== Phase 1: Core Tables =====
-
--- Users table
-CREATE TABLE IF NOT EXISTS public.users (
+-- Users table (wallet-based authentication)
+CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     wallet_address TEXT UNIQUE NOT NULL,
-    email TEXT UNIQUE NOT NULL,
-    username TEXT NOT NULL,
-    avatar_url TEXT,
+    username TEXT,
     bio TEXT,
-    reputation_score DECIMAL(5,2) DEFAULT 50.0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    email TEXT,
+    reputation_score DECIMAL(5,2) DEFAULT 0.00,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- NFTs table
-CREATE TABLE IF NOT EXISTS public.nfts (
+-- NFTs table (off-chain metadata with on-chain references)
+CREATE TABLE nfts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    owner_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    wallet_address TEXT NOT NULL,
+    sui_object_id TEXT UNIQUE,
+    creator_wallet_address TEXT NOT NULL,
+    owner_wallet_address TEXT NOT NULL,
     title TEXT NOT NULL,
     description TEXT,
-    category TEXT NOT NULL,
-    price DECIMAL(18,8) NOT NULL,
     image_url TEXT NOT NULL,
-    sui_object_id TEXT UNIQUE,
-    is_fraud BOOLEAN DEFAULT FALSE,
-    confidence_score DECIMAL(5,2) DEFAULT 0.0,
-    flag_type INTEGER,
-    reason TEXT,
-    evidence_url TEXT, -- Store as JSON string for evidence URLs
-    analysis_details JSONB, -- Store detailed analysis results
-    embedding_vector vector(768), -- Gemini description embeddings are 768-dimensional
-    status TEXT DEFAULT 'pending',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Phase 2: Enhanced NFT columns
+    metadata_url TEXT,
+    attributes JSONB,
+    category TEXT,
+    initial_price DECIMAL(18,8),
     is_listed BOOLEAN DEFAULT FALSE,
-    listing_price DECIMAL(18,8),
-    last_listed_at TIMESTAMP,
-    listing_id TEXT,
-    listing_status TEXT DEFAULT 'inactive'
+    embedding_vector vector(768),
+    analysis_details JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
--- Fraud flags table
-CREATE TABLE IF NOT EXISTS public.fraud_flags (
+-- Listings table (off-chain listing management)
+CREATE TABLE listings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    nft_id UUID NOT NULL REFERENCES nfts(id) ON DELETE CASCADE,
-    flag_type TEXT NOT NULL,
-    reason TEXT NOT NULL,
-    confidence DECIMAL(5,2) NOT NULL,
-    flagged_by TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_active BOOLEAN DEFAULT TRUE
-);
-
--- ===== Phase 2: Marketplace Tables =====
-
--- Listings table
-CREATE TABLE IF NOT EXISTS public.listings (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    nft_id UUID NOT NULL REFERENCES nfts(id) ON DELETE CASCADE,
-    seller_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    price DECIMAL(18,8) NOT NULL,
-    expires_at TIMESTAMP,
-    status TEXT DEFAULT 'active',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    -- Phase 2: Enhanced Listing columns
-    blockchain_tx_id TEXT,
-    listing_id TEXT UNIQUE,
-    metadata JSONB, -- JSONB type for metadata
-    listing_metadata JSONB -- JSONB type for listing metadata
-);
-
--- Listing history table
-CREATE TABLE IF NOT EXISTS public.listing_history (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    listing_id UUID NOT NULL REFERENCES listings(id) ON DELETE CASCADE,
-    nft_id UUID NOT NULL REFERENCES nfts(id) ON DELETE CASCADE,
-    action TEXT NOT NULL, -- 'created', 'updated', 'deleted', 'purchased'
-    old_price DECIMAL(18,8),
-    new_price DECIMAL(18,8),
-    seller_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    blockchain_tx_id TEXT,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- ===== Phase 3: Analytics and Events =====
-
--- Marketplace events table
-CREATE TABLE IF NOT EXISTS public.marketplace_events (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    event_type TEXT NOT NULL, -- 'NFTListed', 'NFTUnlisted', 'NFTPurchased', etc.
     nft_id UUID REFERENCES nfts(id) ON DELETE CASCADE,
-    seller_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    buyer_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    price DECIMAL(18,8),
-    blockchain_tx_id TEXT,
-    metadata JSONB,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    seller_wallet_address TEXT NOT NULL,
+    price DECIMAL(18,8) NOT NULL,
+    status TEXT DEFAULT 'active' CHECK (status IN ('active', 'sold', 'cancelled', 'expired')),
+    listing_metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    expires_at TIMESTAMP WITH TIME ZONE
 );
 
--- ===== Indexes for Performance =====
+-- Transaction history table (off-chain transaction tracking)
+CREATE TABLE transaction_history (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    nft_id UUID REFERENCES nfts(id),
+    listing_id UUID REFERENCES listings(id),
+    seller_wallet_address TEXT NOT NULL,
+    buyer_wallet_address TEXT NOT NULL,
+    price DECIMAL(18,8) NOT NULL,
+    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('mint', 'purchase', 'listing', 'unlisting', 'edit_listing')),
+    blockchain_tx_id TEXT,
+    gas_fee DECIMAL(18,8),
+    status TEXT DEFAULT 'completed',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
--- Users indexes
-CREATE INDEX IF NOT EXISTS users_wallet_address_idx ON public.users (wallet_address);
-CREATE INDEX IF NOT EXISTS users_reputation_score_idx ON public.users (reputation_score);
+-- User reputation tracking
+CREATE TABLE user_reputation_events (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL CHECK (event_type IN ('fraud_detected', 'successful_sale', 'fraud_report', 'positive_review')),
+    nft_id UUID REFERENCES nfts(id),
+    points_change INTEGER NOT NULL,
+    reason TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
 
--- NFTs indexes
-CREATE INDEX IF NOT EXISTS nfts_owner_id_idx ON public.nfts (owner_id);
-CREATE INDEX IF NOT EXISTS nfts_wallet_address_idx ON public.nfts (wallet_address);
-CREATE INDEX IF NOT EXISTS nfts_sui_object_id_idx ON public.nfts (sui_object_id);
-CREATE INDEX IF NOT EXISTS nfts_status_idx ON public.nfts (status);
-CREATE INDEX IF NOT EXISTS nfts_is_fraud_idx ON public.nfts (is_fraud);
-CREATE INDEX IF NOT EXISTS nfts_category_idx ON public.nfts (category);
-CREATE INDEX IF NOT EXISTS nfts_created_at_idx ON public.nfts (created_at);
-CREATE INDEX IF NOT EXISTS nfts_is_listed_idx ON public.nfts (is_listed);
+-- Indexes for performance
+CREATE INDEX idx_users_wallet_address ON users(wallet_address);
+CREATE INDEX idx_nfts_sui_object_id ON nfts(sui_object_id);
+CREATE INDEX idx_nfts_owner_wallet ON nfts(owner_wallet_address);
+CREATE INDEX idx_nfts_creator_wallet ON nfts(creator_wallet_address);
+CREATE INDEX idx_listings_nft_id ON listings(nft_id);
+CREATE INDEX idx_listings_seller_wallet ON listings(seller_wallet_address);
+CREATE INDEX idx_listings_status ON listings(status);
+CREATE INDEX idx_transaction_history_nft_id ON transaction_history(nft_id);
+CREATE INDEX idx_transaction_history_seller ON transaction_history(seller_wallet_address);
+CREATE INDEX idx_transaction_history_buyer ON transaction_history(buyer_wallet_address);
+CREATE INDEX idx_transaction_history_type ON transaction_history(transaction_type);
+CREATE INDEX idx_user_reputation_user_id ON user_reputation_events(user_id);
 
--- Fraud flags indexes
-CREATE INDEX IF NOT EXISTS fraud_flags_nft_id_idx ON public.fraud_flags (nft_id);
-CREATE INDEX IF NOT EXISTS fraud_flags_flag_type_idx ON public.fraud_flags (flag_type);
-CREATE INDEX IF NOT EXISTS fraud_flags_is_active_idx ON public.fraud_flags (is_active);
+-- Vector similarity search index for NFT embeddings
+CREATE INDEX idx_nfts_embedding_vector ON nfts USING ivfflat (embedding_vector vector_cosine_ops) WITH (lists = 100);
 
--- Listings indexes
-CREATE INDEX IF NOT EXISTS listings_nft_id_idx ON public.listings (nft_id);
-CREATE INDEX IF NOT EXISTS listings_seller_id_idx ON public.listings (seller_id);
-CREATE INDEX IF NOT EXISTS listings_status_idx ON public.listings (status);
-CREATE INDEX IF NOT EXISTS listings_price_idx ON public.listings (price);
-CREATE INDEX IF NOT EXISTS listings_created_at_idx ON public.listings (created_at);
+-- Row Level Security (RLS) policies
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE nfts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE listings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE transaction_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_reputation_events ENABLE ROW LEVEL SECURITY;
 
--- Listing history indexes
-CREATE INDEX IF NOT EXISTS listing_history_listing_id_idx ON public.listing_history (listing_id);
-CREATE INDEX IF NOT EXISTS listing_history_nft_id_idx ON public.listing_history (nft_id);
-CREATE INDEX IF NOT EXISTS listing_history_action_idx ON public.listing_history (action);
-CREATE INDEX IF NOT EXISTS listing_history_timestamp_idx ON public.listing_history (timestamp);
+-- Users can read all data but only update their own
+CREATE POLICY "Users can read all user data" ON users FOR SELECT USING (true);
+CREATE POLICY "Users can update own profile" ON users FOR UPDATE USING (wallet_address = current_setting('request.jwt.claims', true)::json->>'wallet_address');
 
--- Marketplace events indexes
-CREATE INDEX IF NOT EXISTS marketplace_events_event_type_idx ON public.marketplace_events (event_type);
-CREATE INDEX IF NOT EXISTS marketplace_events_nft_id_idx ON public.marketplace_events (nft_id);
-CREATE INDEX IF NOT EXISTS marketplace_events_timestamp_idx ON public.marketplace_events (timestamp);
+-- NFTs can be read by all, but only owners can update
+CREATE POLICY "Anyone can read NFT data" ON nfts FOR SELECT USING (true);
+CREATE POLICY "Only NFT owner can update" ON nfts FOR UPDATE USING (owner_wallet_address = current_setting('request.jwt.claims', true)::json->>'wallet_address');
 
--- Vector similarity search index
-CREATE INDEX IF NOT EXISTS nfts_embedding_vector_idx ON public.nfts USING ivfflat (embedding_vector vector_cosine_ops) WITH (lists = 100);
+-- Listings can be read by all, but only sellers can modify
+CREATE POLICY "Anyone can read listings" ON listings FOR SELECT USING (true);
+CREATE POLICY "Only seller can modify listing" ON listings FOR ALL USING (seller_wallet_address = current_setting('request.jwt.claims', true)::json->>'wallet_address');
 
--- ===== Views for Analytics =====
+-- Transaction history is read-only for all
+CREATE POLICY "Anyone can read transaction history" ON transaction_history FOR SELECT USING (true);
 
--- Marketplace overview view
-CREATE OR REPLACE VIEW public.marketplace_overview AS
-SELECT 
-    COUNT(DISTINCT n.id) as total_nfts,
-    COUNT(DISTINCT l.id) as total_listings,
-    COUNT(DISTINCT u.id) as total_users,
-    AVG(l.price) as average_price,
-    SUM(l.price) as total_volume,
-    COUNT(DISTINCT CASE WHEN n.is_fraud THEN n.id END) as flagged_nfts
-FROM public.nfts n
-LEFT JOIN public.listings l ON n.id = l.nft_id AND l.status = 'active'
-LEFT JOIN public.users u ON n.owner_id = u.id;
+-- Reputation events are read-only for all
+CREATE POLICY "Anyone can read reputation events" ON user_reputation_events FOR SELECT USING (true);
 
--- User portfolio view
-CREATE OR REPLACE VIEW public.user_portfolio AS
-SELECT 
-    u.id as user_id,
-    u.wallet_address,
-    u.username,
-    COUNT(DISTINCT n.id) as total_nfts,
-    COUNT(DISTINCT l.id) as active_listings,
-    AVG(l.price) as average_listing_price,
-    u.reputation_score
-FROM public.users u
-LEFT JOIN public.nfts n ON u.id = n.owner_id
-LEFT JOIN public.listings l ON n.id = l.nft_id AND l.status = 'active'
-GROUP BY u.id, u.wallet_address, u.username, u.reputation_score;
-
--- ===== Functions for Common Operations =====
-
--- Function to update NFT listing status
-CREATE OR REPLACE FUNCTION update_nft_listing_status()
+-- Functions for automatic updates
+CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF NEW.status = 'active' THEN
-        UPDATE public.nfts 
-        SET is_listed = TRUE, listing_price = NEW.price, last_listed_at = CURRENT_TIMESTAMP, listing_status = 'active'
-        WHERE id = NEW.nft_id;
-    ELSIF NEW.status = 'inactive' OR NEW.status = 'sold' THEN
-        UPDATE public.nfts 
-        SET is_listed = FALSE, listing_price = NULL, last_listed_at = NULL, listing_status = 'inactive'
-        WHERE id = NEW.nft_id;
-    END IF;
+    NEW.updated_at = NOW();
     RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Triggers for automatic timestamp updates
+CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_nfts_updated_at BEFORE UPDATE ON nfts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_listings_updated_at BEFORE UPDATE ON listings FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Function to update user reputation score
+CREATE OR REPLACE FUNCTION update_user_reputation()
+RETURNS TRIGGER AS $$
+BEGIN
+    UPDATE users 
+    SET reputation_score = (
+        SELECT COALESCE(SUM(points_change), 0)
+        FROM user_reputation_events 
+        WHERE user_id = NEW.user_id
+    )
+    WHERE id = NEW.user_id;
+    RETURN NEW;
+END;
+$$ language 'plpgsql';
+
+-- Trigger to update reputation when events are added
+CREATE TRIGGER update_reputation_score 
+    AFTER INSERT ON user_reputation_events 
+    FOR EACH ROW EXECUTE FUNCTION update_user_reputation();
+
+-- Function to find similar NFTs using vector similarity
+CREATE OR REPLACE FUNCTION find_similar_nfts(
+    target_embedding vector(768),
+    similarity_threshold float DEFAULT 0.8,
+    limit_count int DEFAULT 10
+)
+RETURNS TABLE(
+    nft_id UUID,
+    title TEXT,
+    similarity_score float
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        n.id,
+        n.title,
+        1 - (n.embedding_vector <=> target_embedding) as similarity_score
+    FROM nfts n
+    WHERE n.embedding_vector IS NOT NULL
+    AND 1 - (n.embedding_vector <=> target_embedding) > similarity_threshold
+    ORDER BY n.embedding_vector <=> target_embedding
+    LIMIT limit_count;
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger to automatically update NFT listing status
-CREATE TRIGGER update_nft_listing_status_trigger
-    AFTER INSERT OR UPDATE ON public.listings
-    FOR EACH ROW
-    EXECUTE FUNCTION update_nft_listing_status();
+-- Comments for documentation
+COMMENT ON TABLE users IS 'User profiles with wallet-based authentication';
+COMMENT ON TABLE nfts IS 'NFT metadata with on-chain references and AI analysis results';
+COMMENT ON TABLE listings IS 'Off-chain listing management for marketplace';
+COMMENT ON TABLE transaction_history IS 'Off-chain transaction tracking';
+COMMENT ON TABLE user_reputation_events IS 'Reputation scoring events for fraud detection';
+COMMENT ON FUNCTION find_similar_nfts IS 'Find similar NFTs using vector similarity search for plagiarism detection';
 
--- Function to log marketplace events
-CREATE OR REPLACE FUNCTION log_marketplace_event()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO public.marketplace_events (
-        event_type,
-        nft_id,
-        seller_id,
-        price,
-        blockchain_tx_id,
-        metadata
-    ) VALUES (
-        TG_OP,
-        NEW.nft_id,
-        NEW.seller_id,
-        NEW.price,
-        NEW.blockchain_tx_id,
-        jsonb_build_object('listing_id', NEW.id, 'status', NEW.status)
-    );
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Trigger to automatically log marketplace events
-CREATE TRIGGER log_marketplace_event_trigger
-    AFTER INSERT OR UPDATE ON public.listings
-    FOR EACH ROW
-    EXECUTE FUNCTION log_marketplace_event();
-
--- ===== Sample Data (Optional) =====
-
--- Insert sample users
-INSERT INTO public.users (wallet_address, email, username, reputation_score) VALUES
-('0x1234567890abcdef', 'user1@example.com', 'User1', 75.0),
-('0xabcdef1234567890', 'user2@example.com', 'User2', 85.0)
-ON CONFLICT (wallet_address) DO NOTHING;
-
--- ===== Comments =====
-
-COMMENT ON TABLE public.users IS 'User accounts and profiles';
-COMMENT ON TABLE public.nfts IS 'NFT metadata and fraud detection results';
-COMMENT ON TABLE public.fraud_flags IS 'Fraud detection flags for NFTs';
-COMMENT ON TABLE public.listings IS 'NFT marketplace listings';
-COMMENT ON TABLE public.listing_history IS 'Audit trail for listing changes';
-COMMENT ON TABLE public.marketplace_events IS 'Marketplace activity events';
-
-COMMENT ON COLUMN public.nfts.embedding_vector IS 'Vector embedding for similarity search using Gemini analysis';
-COMMENT ON COLUMN public.nfts.analysis_details IS 'Detailed fraud analysis results from AI models';
-COMMENT ON COLUMN public.nfts.evidence_url IS 'JSON array of evidence URLs for fraud detection';
-COMMENT ON COLUMN public.nfts.sui_object_id IS 'Sui blockchain object ID for the NFT';

@@ -3,6 +3,7 @@ Listings API Module
 Handles listing management, history tracking, and marketplace analytics
 """
 import logging
+import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from uuid import UUID
@@ -10,16 +11,16 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, and_
 
 try:
     from database.connection import get_db
-    from models.database import Listing, ListingHistory, TransactionHistory, User, NFT
+    from models.database import Listing, TransactionHistory, User, NFT
     from agent.sui_client import sui_client
     from agent.supabase_client import supabase_client
 except ImportError:
     from backend.database.connection import get_db
-    from backend.models.database import Listing, ListingHistory, TransactionHistory, User, NFT
+    from backend.models.database import Listing, TransactionHistory, User, NFT
     from backend.agent.sui_client import sui_client
     from backend.agent.supabase_client import supabase_client
 
@@ -43,16 +44,14 @@ class ListingUpdate(BaseModel):
 class ListingResponse(BaseModel):
     id: UUID
     nft_id: UUID
-    seller_id: UUID
+    seller_wallet_address: str  # Matches database field
     price: float
     expires_at: Optional[datetime] = None
     status: str
-    kiosk_id: Optional[str] = None
-    listing_id: Optional[str] = None
-    blockchain_tx_id: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     listing_metadata: Optional[Dict[str, Any]] = None
+    # Extra fields from joins
     nft_title: Optional[str] = None
     nft_image_url: Optional[str] = None
     seller_username: Optional[str] = None
@@ -69,8 +68,7 @@ class ListingHistoryResponse(BaseModel):
     action: str
     old_price: Optional[float] = None
     new_price: Optional[float] = None
-    seller_id: UUID
-    kiosk_id: Optional[str] = None
+    seller_wallet_address: str  # Changed from seller_id to match database
     blockchain_tx_id: Optional[str] = None
     timestamp: datetime
 
@@ -87,14 +85,14 @@ class TransactionHistoryResponse(BaseModel):
     id: UUID
     nft_id: UUID
     listing_id: Optional[UUID] = None
-    seller_id: UUID
-    buyer_id: UUID
+    seller_wallet_address: str  # Changed from seller_id to match database
+    buyer_wallet_address: str   # Changed from buyer_id to match database
     price: float
     blockchain_tx_id: str
     transaction_type: str
     status: str
     gas_fee: Optional[float] = None
-    timestamp: datetime
+    created_at: datetime  # Changed from timestamp to match database
 
 class UserCreateRequest(BaseModel):
     wallet_address: str
@@ -106,8 +104,7 @@ class UserResponse(BaseModel):
     wallet_address: str
     username: str
     email: str
-    avatar_url: Optional[str] = None
-    bio: Optional[str] = None
+    bio: Optional[str] = None  # Removed avatar_url as it doesn't exist in database
     reputation_score: float
     created_at: datetime
 
@@ -126,49 +123,54 @@ class MarketplaceAnalyticsResponse(BaseModel):
     price_trends: List[Dict[str, Any]]
     generated_at: datetime
 
-# Background task functions
-async def sync_listing_to_blockchain(listing_id: UUID):
-    """Sync listing to blockchain"""
-    try:
-        logger.info(f"Syncing listing {listing_id} to blockchain")
-        # Use the listing sync service
-        from agent.listing_sync_service import get_listing_sync_service
-        sync_service = await get_listing_sync_service()
-        if sync_service:
-            await sync_service._sync_single_listing(listing_id, None)
-    except Exception as e:
-        logger.error(f"Error syncing listing to blockchain: {e}")
-
-async def sync_listing_update_to_blockchain(listing_id: UUID):
-    """Sync listing update to blockchain"""
-    try:
-        logger.info(f"Syncing listing update {listing_id} to blockchain")
-        # Use the listing sync service
-        from agent.listing_sync_service import get_listing_sync_service
-        sync_service = await get_listing_sync_service()
-        if sync_service:
-            # Get the new price from the listing
-            db = next(get_db())
-            listing = db.query(Listing).filter(Listing.id == listing_id).first()
-            if listing:
-                await sync_service.sync_listing_update(listing_id, float(listing.price))
-            db.close()
-    except Exception as e:
-        logger.error(f"Error syncing listing update to blockchain: {e}")
-
-async def sync_listing_deletion_to_blockchain(listing_id: UUID):
-    """Sync listing deletion to blockchain"""
-    try:
-        logger.info(f"Syncing listing deletion {listing_id} to blockchain")
-        # Use the listing sync service
-        from agent.listing_sync_service import get_listing_sync_service
-        sync_service = await get_listing_sync_service()
-        if sync_service:
-            await sync_service.sync_listing_deletion(listing_id)
-    except Exception as e:
-        logger.error(f"Error syncing listing deletion to blockchain: {e}")
-
 # API Routes
+@router.post("/user", response_model=UserResponse)
+async def create_user(
+    user_data: UserCreateRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new user or get existing user by wallet address"""
+    try:
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.wallet_address == user_data.wallet_address).first()
+        
+        if existing_user:
+            # Return existing user
+            return UserResponse(
+                id=existing_user.id,
+                wallet_address=existing_user.wallet_address,
+                username=existing_user.username,
+                email=existing_user.email,
+                bio=existing_user.bio,
+                reputation_score=existing_user.reputation_score,
+                created_at=existing_user.created_at
+            )
+        
+        # Create new user
+        new_user = User(
+            wallet_address=user_data.wallet_address,
+            username=user_data.username or f"user_{user_data.wallet_address[:8]}",
+            email=user_data.email or f"{user_data.wallet_address[:8]}@fraudguard.com"
+        )
+        
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        return UserResponse(
+            id=new_user.id,
+            wallet_address=new_user.wallet_address,
+            username=new_user.username,
+            email=new_user.email,
+            bio=new_user.bio,
+            reputation_score=new_user.reputation_score,
+            created_at=new_user.created_at
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
 @router.post("/", response_model=ListingResponse)
 async def create_listing(
     listing_data: ListingCreate,
@@ -182,31 +184,67 @@ async def create_listing(
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
-        # Create listing in database
-        listing = Listing(
-            nft_id=listing_data.nft_id,
-            seller_id=nft.owner_id,
-            price=listing_data.price,
-            expires_at=listing_data.expires_at,
-            listing_metadata=listing_data.listing_metadata,
-            status="active"
-        )
+        # Check if there's already an active listing for this NFT
+        existing_active_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == listing_data.nft_id,
+                Listing.status == "active"
+            )
+        ).first()
         
-        db.add(listing)
-        db.commit()
-        db.refresh(listing)
+        if existing_active_listing:
+            raise HTTPException(
+                status_code=400, 
+                detail="NFT is already listed. Please unlist the current listing before creating a new one."
+            )
         
-        # Update NFT listing status
-        nft.is_listed = True
-        nft.listing_price = listing_data.price
-        nft.last_listed_at = datetime.utcnow()
-        nft.listing_status = "active"
-        db.commit()
+        # Check if there's a cancelled listing for this NFT that we can reactivate
+        existing_cancelled_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == listing_data.nft_id,
+                Listing.status == "cancelled"
+            )
+        ).first()
         
-        # Background task to sync with blockchain
-        background_tasks.add_task(sync_listing_to_blockchain, listing.id)
-        
-        return listing
+        if existing_cancelled_listing:
+            # Reactivate the cancelled listing with new price and metadata
+            logger.info(f"Found cancelled listing {existing_cancelled_listing.id} for NFT {listing_data.nft_id}, reactivating...")
+            
+            existing_cancelled_listing.price = listing_data.price
+            existing_cancelled_listing.expires_at = listing_data.expires_at
+            existing_cancelled_listing.listing_metadata = listing_data.listing_metadata
+            existing_cancelled_listing.status = "active"
+            existing_cancelled_listing.updated_at = datetime.utcnow()
+            
+            # Update NFT listing status
+            nft.is_listed = True
+            
+            db.commit()
+            db.refresh(existing_cancelled_listing)
+            
+            logger.info(f"Successfully reactivated cancelled listing {existing_cancelled_listing.id} for NFT {listing_data.nft_id}")
+            
+            return existing_cancelled_listing
+        else:
+            # Create new listing in database
+            listing = Listing(
+                nft_id=listing_data.nft_id,
+                seller_wallet_address=nft.owner_wallet_address,
+                price=listing_data.price,
+                expires_at=listing_data.expires_at,
+                listing_metadata=listing_data.listing_metadata,
+                status="active"
+            )
+            
+            db.add(listing)
+            db.commit()
+            db.refresh(listing)
+            
+            # Update NFT listing status
+            nft.is_listed = True
+            db.commit()
+            
+            return listing
         
     except Exception as e:
         logger.error(f"Error creating listing: {e}")
@@ -222,7 +260,7 @@ async def debug_all_listings(db: Session = Depends(get_db)):
             debug_info.append({
                 "id": str(listing.id),
                 "nft_id": str(listing.nft_id),
-                "seller_id": str(listing.seller_id),
+                "seller_wallet_address": listing.seller_wallet_address,
                 "price": float(listing.price) if listing.price else 0.0,
                 "status": listing.status,
                 "created_at": listing.created_at.isoformat() if listing.created_at else None
@@ -236,7 +274,7 @@ async def debug_all_listings(db: Session = Depends(get_db)):
 @router.get("/", response_model=List[ListingResponse])
 async def get_listings(
     status: Optional[str] = Query(None, description="Filter by status"),
-    seller_id: Optional[UUID] = Query(None, description="Filter by seller"),
+    seller_wallet_address: Optional[str] = Query(None, description="Filter by seller wallet address"),
     category: Optional[str] = Query(None, description="Filter by category"),
     min_price: Optional[float] = Query(None, description="Minimum price"),
     max_price: Optional[float] = Query(None, description="Maximum price"),
@@ -249,14 +287,14 @@ async def get_listings(
     try:
         query = db.query(Listing).join(NFT).join(User)
         
-        # Exclude deleted listings by default
+        # Exclude cancelled listings by default
         if not include_deleted:
-            query = query.filter(Listing.status != "deleted")
+            query = query.filter(Listing.status != "cancelled")
         
         if status:
             query = query.filter(Listing.status == status)
-        if seller_id:
-            query = query.filter(Listing.seller_id == seller_id)
+        if seller_wallet_address:
+            query = query.filter(Listing.seller_wallet_address == seller_wallet_address)
         if category:
             query = query.filter(NFT.category == category)
         if min_price is not None:
@@ -270,18 +308,15 @@ async def get_listings(
         response_listings = []
         for listing in listings:
             nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
-            seller = db.query(User).filter(User.id == listing.seller_id).first()
+            seller = db.query(User).filter(User.wallet_address == listing.seller_wallet_address).first()
             
             response_listings.append(ListingResponse(
                 id=listing.id,
                 nft_id=listing.nft_id,
-                seller_id=listing.seller_id,
+                seller_wallet_address=listing.seller_wallet_address,
                 price=listing.price,
                 expires_at=listing.expires_at,
                 status=listing.status,
-                kiosk_id=listing.kiosk_id,
-                listing_id=listing.listing_id,
-                blockchain_tx_id=listing.blockchain_tx_id,
                 created_at=listing.created_at,
                 updated_at=listing.updated_at,
                 listing_metadata=listing.listing_metadata,
@@ -312,15 +347,15 @@ async def get_marketplace_listings(
 ):
     """
     Get marketplace listings with advanced filtering and sorting
-    This endpoint provides the main marketplace view
+    This endpoint provides the main marketplace view - only shows active listings
     """
     try:
-        # Start with active listings
+        # Start with active listings only
         query = db.query(Listing).filter(Listing.status == "active")
         
         # Join with NFT and User tables for filtering
         query = query.join(NFT, Listing.nft_id == NFT.id)
-        query = query.join(User, Listing.seller_id == User.id)
+        query = query.join(User, Listing.seller_wallet_address == User.wallet_address)
         
         # Apply filters
         if category:
@@ -363,7 +398,7 @@ async def get_marketplace_listings(
                 nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
                 
                 # Get seller information
-                seller = db.query(User).filter(User.id == listing.seller_id).first()
+                seller = db.query(User).filter(User.wallet_address == listing.seller_wallet_address).first()
                 
                 # Safely handle price conversion
                 try:
@@ -385,13 +420,10 @@ async def get_marketplace_listings(
                 listing_response = ListingResponse(
                     id=listing.id,
                     nft_id=listing.nft_id,
-                    seller_id=listing.seller_id,
+                    seller_wallet_address=listing.seller_wallet_address,
                     price=price,
                     expires_at=listing.expires_at,
                     status=listing.status or "unknown",
-                    kiosk_id=listing.kiosk_id,
-                    listing_id=listing.listing_id,
-                    blockchain_tx_id=listing.blockchain_tx_id,
                     created_at=listing.created_at,
                     updated_at=listing.updated_at,
                     listing_metadata=listing_metadata,
@@ -427,12 +459,12 @@ async def get_user_listings(
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
         
-        # Query listings for this user
-        query = db.query(Listing).filter(Listing.seller_id == user.id)
+        # Query listings for this user by wallet address
+        query = db.query(Listing).filter(Listing.seller_wallet_address == wallet_address)
         
-        # Exclude deleted listings by default
+        # Exclude cancelled listings by default
         if not include_deleted:
-            query = query.filter(Listing.status != "deleted")
+            query = query.filter(Listing.status != "cancelled")
         
         if status:
             query = query.filter(Listing.status == status)
@@ -464,13 +496,10 @@ async def get_user_listings(
             listing_response = ListingResponse(
                 id=listing.id,
                 nft_id=listing.nft_id,
-                seller_id=listing.seller_id,
+                seller_wallet_address=listing.seller_wallet_address,
                 price=price,
                 expires_at=listing.expires_at,
                 status=listing.status or "unknown",
-                kiosk_id=listing.kiosk_id,
-                listing_id=listing.listing_id,
-                blockchain_tx_id=listing.blockchain_tx_id,
                 created_at=listing.created_at,
                 updated_at=listing.updated_at,
                 listing_metadata=listing_metadata,
@@ -495,8 +524,8 @@ async def get_marketplace_analytics(
 ):
     """Get marketplace analytics for specified time period"""
     try:
-        # Calculate time filter based on period
-        now = datetime.utcnow()
+        # Calculate time filter based on period - ensure timezone awareness
+        now = datetime.utcnow().replace(tzinfo=None)  # Make timezone-naive for comparison
         if time_period == "24h":
             start_time = now - timedelta(hours=24)
         elif time_period == "7d":
@@ -506,96 +535,135 @@ async def get_marketplace_analytics(
         else:  # "all"
             start_time = datetime.min
         
-        # Get current period data
+        # Get current period data - convert database timestamps to timezone-naive for comparison
         current_listings = db.query(Listing).filter(
             Listing.created_at >= start_time
         ).all()
         
         total_listings = len(current_listings)
-        new_listings = len([l for l in current_listings if l.created_at >= start_time])
+        new_listings = len([l for l in current_listings if l.created_at.replace(tzinfo=None) >= start_time])
         
-        # Get completed sales (transactions) in period
+        # Get completed sales (transactions) in period  
         completed_sales_query = db.query(TransactionHistory).filter(
-            TransactionHistory.timestamp >= start_time,
-            TransactionHistory.status == "completed"
+            TransactionHistory.created_at >= start_time
         )
         completed_sales = completed_sales_query.count()
         
-        # Calculate total volume and average price
+        # Calculate total volume and average price with safe handling
         sales_data = completed_sales_query.all()
-        total_volume = sum([sale.price for sale in sales_data]) if sales_data else 0.0
-        average_price = total_volume / len(sales_data) if sales_data else 0.0
+        total_volume = 0.0
+        average_price = 0.0
+        
+        if sales_data:
+            try:
+                total_volume = sum([float(sale.price) if sale.price is not None else 0.0 for sale in sales_data])
+                average_price = total_volume / len(sales_data) if len(sales_data) > 0 else 0.0
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Error calculating sales data: {e}")
+                total_volume = 0.0
+                average_price = 0.0
         
         # Calculate price change (compare with previous period)
         prev_start = start_time - (now - start_time) if time_period != "all" else datetime.min
         prev_sales = db.query(TransactionHistory).filter(
-            TransactionHistory.timestamp >= prev_start,
-            TransactionHistory.timestamp < start_time,
+            TransactionHistory.created_at >= prev_start,
+            TransactionHistory.created_at < start_time,
             TransactionHistory.status == "completed"
         ).all()
         
-        prev_avg_price = sum([sale.price for sale in prev_sales]) / len(prev_sales) if prev_sales else 0.0
-        price_change_percent = ((average_price - prev_avg_price) / prev_avg_price * 100) if prev_avg_price > 0 else 0.0
+        prev_avg_price = 0.0
+        if prev_sales:
+            try:
+                prev_total = sum([float(sale.price) if sale.price is not None else 0.0 for sale in prev_sales])
+                prev_avg_price = prev_total / len(prev_sales) if len(prev_sales) > 0 else 0.0
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Error calculating previous sales data: {e}")
+                prev_avg_price = 0.0
         
-        # Get active users count
-        active_users = db.query(Listing.seller_id).filter(
+        price_change_percent = 0.0
+        if prev_avg_price > 0:
+            price_change_percent = ((average_price - prev_avg_price) / prev_avg_price * 100)
+        
+        # Get active users count (by wallet address, not seller_id)
+        active_users = db.query(Listing.seller_wallet_address).filter(
             Listing.created_at >= start_time
         ).distinct().count()
         
         # Get fraud incidents (placeholder calculation)
         fraud_incidents = int(total_listings * 0.02)  # Assume 2% fraud rate
-        fraud_rate = fraud_incidents / total_listings * 100 if total_listings > 0 else 0.0
+        fraud_rate = (fraud_incidents / total_listings * 100) if total_listings > 0 else 0.0
         
-        # Get top categories
-        category_data = db.query(NFT.category, func.count(Listing.id).label('count')).join(
-            Listing, NFT.id == Listing.nft_id
-        ).filter(
-            Listing.created_at >= start_time
-        ).group_by(NFT.category).order_by(func.count(Listing.id).desc()).limit(5).all()
-        
-        top_categories = [
-            {"category": cat[0] or "Unknown", "count": cat[1]}
-            for cat in category_data
-        ]
+        # Get top categories with safe handling
+        try:
+            category_data = db.query(NFT.category, func.count(Listing.id).label('count')).join(
+                Listing, NFT.id == Listing.nft_id
+            ).filter(
+                Listing.created_at >= start_time
+            ).group_by(NFT.category).order_by(func.count(Listing.id).desc()).limit(5).all()
+            
+            top_categories = [
+                {"category": cat[0] or "Unknown", "count": int(cat[1])}
+                for cat in category_data
+            ]
+        except Exception as e:
+            logger.warning(f"Error getting category data: {e}")
+            top_categories = []
         
         # Generate price trends (simplified - daily averages for the period)
-        if time_period == "24h":
-            # Hourly trends for 24h
+        price_trends = []
+        try:
+            if time_period == "24h":
+                # Hourly trends for 24h
+                for i in range(24):
+                    hour_start = now - timedelta(hours=i+1)
+                    hour_end = now - timedelta(hours=i)
+                    hour_sales = db.query(TransactionHistory).filter(
+                        TransactionHistory.created_at >= hour_start,
+                        TransactionHistory.created_at < hour_end,
+                        TransactionHistory.status == "completed"
+                    ).all()
+                    
+                    hour_avg = 0.0
+                    if hour_sales:
+                        try:
+                            hour_total = sum([float(sale.price) if sale.price is not None else 0.0 for sale in hour_sales])
+                            hour_avg = hour_total / len(hour_sales) if len(hour_sales) > 0 else 0.0
+                        except (TypeError, ValueError):
+                            hour_avg = 0.0
+                    
+                    price_trends.append({
+                        "timestamp": hour_start.isoformat(),
+                        "average_price": hour_avg,
+                        "volume": len(hour_sales)
+                    })
+            else:
+                # Daily trends for longer periods
+                days = 7 if time_period == "7d" else (30 if time_period == "30d" else 30)
+                for i in range(days):
+                    day_start = (now - timedelta(days=i+1)).replace(hour=0, minute=0, second=0, microsecond=0)
+                    day_end = day_start + timedelta(days=1)
+                    day_sales = db.query(TransactionHistory).filter(
+                        TransactionHistory.created_at >= day_start,
+                        TransactionHistory.created_at < day_end,
+                        TransactionHistory.status == "completed"
+                    ).all()
+                    
+                    day_avg = 0.0
+                    if day_sales:
+                        try:
+                            day_total = sum([float(sale.price) if sale.price is not None else 0.0 for sale in day_sales])
+                            day_avg = day_total / len(day_sales) if len(day_sales) > 0 else 0.0
+                        except (TypeError, ValueError):
+                            day_avg = 0.0
+                    
+                    price_trends.append({
+                        "timestamp": day_start.isoformat(),
+                        "average_price": day_avg,
+                        "volume": len(day_sales)
+                    })
+        except Exception as e:
+            logger.warning(f"Error generating price trends: {e}")
             price_trends = []
-            for i in range(24):
-                hour_start = now - timedelta(hours=i+1)
-                hour_end = now - timedelta(hours=i)
-                hour_sales = db.query(TransactionHistory).filter(
-                    TransactionHistory.timestamp >= hour_start,
-                    TransactionHistory.timestamp < hour_end,
-                    TransactionHistory.status == "completed"
-                ).all()
-                
-                hour_avg = sum([sale.price for sale in hour_sales]) / len(hour_sales) if hour_sales else 0.0
-                price_trends.append({
-                    "timestamp": hour_start.isoformat(),
-                    "average_price": hour_avg,
-                    "volume": len(hour_sales)
-                })
-        else:
-            # Daily trends for longer periods
-            days = 7 if time_period == "7d" else (30 if time_period == "30d" else 30)
-            price_trends = []
-            for i in range(days):
-                day_start = (now - timedelta(days=i+1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                day_end = day_start + timedelta(days=1)
-                day_sales = db.query(TransactionHistory).filter(
-                    TransactionHistory.timestamp >= day_start,
-                    TransactionHistory.timestamp < day_end,
-                    TransactionHistory.status == "completed"
-                ).all()
-                
-                day_avg = sum([sale.price for sale in day_sales]) / len(day_sales) if day_sales else 0.0
-                price_trends.append({
-                    "timestamp": day_start.isoformat(),
-                    "average_price": day_avg,
-                    "volume": len(day_sales)
-                })
         
         return MarketplaceAnalyticsResponse(
             time_period=time_period,
@@ -629,9 +697,9 @@ async def get_listing(
     try:
         query = db.query(Listing).filter(Listing.id == listing_id)
         
-        # Exclude deleted listings by default
+        # Exclude cancelled listings by default
         if not include_deleted:
-            query = query.filter(Listing.status != "deleted")
+            query = query.filter(Listing.status != "cancelled")
         
         listing = query.first()
         if not listing:
@@ -642,18 +710,15 @@ async def get_listing(
             raise HTTPException(status_code=404, detail=f"Listing not found with ID: {listing_id}")
         
         nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
-        seller = db.query(User).filter(User.id == listing.seller_id).first()
+        seller = db.query(User).filter(User.wallet_address == listing.seller_wallet_address).first()
         
         return ListingResponse(
             id=listing.id,
             nft_id=listing.nft_id,
-            seller_id=listing.seller_id,
+            seller_wallet_address=listing.seller_wallet_address,
             price=listing.price,
             expires_at=listing.expires_at,
             status=listing.status,
-            kiosk_id=listing.kiosk_id,
-            listing_id=listing.listing_id,
-            blockchain_tx_id=listing.blockchain_tx_id,
             created_at=listing.created_at,
             updated_at=listing.updated_at,
             listing_metadata=listing.listing_metadata,
@@ -686,8 +751,9 @@ async def update_listing(
             logger.error(f"Listing {listing_id} not found. Available listings: {available_ids[:10]}")
             raise HTTPException(status_code=404, detail=f"Listing not found with ID: {listing_id}")
         
-        # Record old values for history
+        # Record old values for history (log only since ListingHistory model doesn't exist)
         old_price = listing.price
+        logger.info(f"Updating listing {listing_id}: old_price={old_price}, new_price={listing_data.price}")
         
         # Update listing
         if listing_data.price is not None:
@@ -699,25 +765,11 @@ async def update_listing(
         
         listing.updated_at = datetime.utcnow()
         
-        # Create history record
-        history = ListingHistory(
-            listing_id=listing_id,
-            nft_id=listing.nft_id,
-            action="updated",
-            old_price=old_price,
-            new_price=listing.price,
-            seller_id=listing.seller_id,
-            kiosk_id=listing.kiosk_id,
-            blockchain_tx_id=listing.blockchain_tx_id
-        )
+        # Log the update (since ListingHistory model doesn't exist)
+        logger.info(f"Listing {listing_id} updated successfully")
         
-        db.add(history)
         db.commit()
         db.refresh(listing)
-        
-        # Background task to sync with blockchain
-        background_tasks.add_task(sync_listing_update_to_blockchain, listing.id)
-        
         return listing
         
     except HTTPException:
@@ -732,7 +784,7 @@ async def delete_listing(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
-    """Delete a listing (soft delete - marks as deleted rather than removing from database)"""
+    """Cancel a listing (soft delete - marks as cancelled rather than removing from database)"""
     try:
         logger.info(f"Attempting to delete listing with ID: {listing_id}")
         listing = db.query(Listing).filter(Listing.id == listing_id).first()
@@ -743,39 +795,26 @@ async def delete_listing(
             logger.error(f"Listing {listing_id} not found. Available listings: {available_ids[:10]}")
             raise HTTPException(status_code=404, detail=f"Listing not found with ID: {listing_id}")
         
-        # Check if already deleted
-        if listing.status == "deleted":
-            raise HTTPException(status_code=400, detail="Listing is already deleted")
+        # Check if already cancelled
+        if listing.status == "cancelled":
+            raise HTTPException(status_code=400, detail="Listing is already cancelled")
         
-        # Create history record
-        history = ListingHistory(
-            listing_id=listing_id,
-            nft_id=listing.nft_id,
-            action="deleted",
-            old_price=listing.price,
-            seller_id=listing.seller_id,
-            kiosk_id=listing.kiosk_id,
-            blockchain_tx_id=listing.blockchain_tx_id
-        )
-        
-        db.add(history)
+        # Log the deletion (since ListingHistory model doesn't exist)
+        logger.info(f"Cancelling listing {listing_id}: price={listing.price}")
         
         # Update NFT listing status
         nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
         if nft:
             nft.is_listed = False
-            nft.listing_status = "inactive"
+            logger.info(f"Updated NFT {nft.id} listing status to inactive")
         
-        # Soft delete: Mark listing as deleted instead of removing it
-        listing.status = "deleted"
+        # Soft delete: Mark listing as cancelled instead of removing it
+        listing.status = "cancelled"
         listing.updated_at = datetime.utcnow()
         
         db.commit()
         
-        # Background task to sync with blockchain
-        background_tasks.add_task(sync_listing_deletion_to_blockchain, listing_id)
-        
-        return {"message": "Listing deleted successfully"}
+        return {"message": "Listing cancelled successfully"}
         
     except HTTPException:
         raise
@@ -789,13 +828,11 @@ async def get_listing_history(
     listing_id: UUID,
     db: Session = Depends(get_db)
 ):
-    """Get history for a specific listing"""
+    """Get history for a specific listing (placeholder - ListingHistory model doesn't exist)"""
     try:
-        history = db.query(ListingHistory).filter(
-            ListingHistory.listing_id == listing_id
-        ).order_by(ListingHistory.timestamp.desc()).all()
-        
-        return history
+        # Since ListingHistory model doesn't exist, return empty list with warning
+        logger.warning(f"ListingHistory model not available. Returning empty history for listing {listing_id}")
+        return []
         
     except Exception as e:
         logger.error(f"Error fetching listing history: {e}")
@@ -810,8 +847,8 @@ async def get_marketplace_stats(
         # Get active listings count
         active_listings = db.query(Listing).filter(Listing.status == "active").count()
         
-        # Get active sellers count
-        active_sellers = db.query(Listing.seller_id).filter(
+        # Get active sellers count (by wallet address)
+        active_sellers = db.query(Listing.seller_wallet_address).filter(
             Listing.status == "active"
         ).distinct().count()
         
@@ -850,8 +887,8 @@ async def get_marketplace_stats(
 @router.get("/transactions/history", response_model=List[TransactionHistoryResponse])
 async def get_transaction_history(
     nft_id: Optional[UUID] = Query(None, description="Filter by NFT ID"),
-    seller_id: Optional[UUID] = Query(None, description="Filter by seller"),
-    buyer_id: Optional[UUID] = Query(None, description="Filter by buyer"),
+    seller_wallet_address: Optional[str] = Query(None, description="Filter by seller wallet address"),
+    buyer_wallet_address: Optional[str] = Query(None, description="Filter by buyer wallet address"),
     transaction_type: Optional[str] = Query(None, description="Filter by transaction type"),
     limit: int = Query(50, description="Number of transactions to return"),
     offset: int = Query(0, description="Number of transactions to skip"),
@@ -863,14 +900,14 @@ async def get_transaction_history(
         
         if nft_id:
             query = query.filter(TransactionHistory.nft_id == nft_id)
-        if seller_id:
-            query = query.filter(TransactionHistory.seller_id == seller_id)
-        if buyer_id:
-            query = query.filter(TransactionHistory.buyer_id == buyer_id)
+        if seller_wallet_address:
+            query = query.filter(TransactionHistory.seller_wallet_address == seller_wallet_address)
+        if buyer_wallet_address:
+            query = query.filter(TransactionHistory.buyer_wallet_address == buyer_wallet_address)
         if transaction_type:
             query = query.filter(TransactionHistory.transaction_type == transaction_type)
         
-        transactions = query.order_by(TransactionHistory.timestamp.desc()).offset(offset).limit(limit).all()
+        transactions = query.order_by(TransactionHistory.created_at.desc()).offset(offset).limit(limit).all()
         
         return transactions
         

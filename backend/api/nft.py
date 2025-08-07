@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, List
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import Column, String, Text, Boolean, Integer, DateTime, ForeignKey, DECIMAL, text, and_, or_, desc, func
-from sqlalchemy.dialects.postgresql import UUID, JSON
+from sqlalchemy.dialects.postgresql import UUID, JSON, JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from pydantic import BaseModel
 import asyncio
@@ -30,8 +30,6 @@ except ImportError:
 
 # Configure logging
 logger = logging.getLogger(__name__)
-
-Base = declarative_base()
 
 # Import AI services
 try:
@@ -62,123 +60,150 @@ except ImportError:
 
 # Import database models
 try:
-    from models.database import User, NFT, Base, Listing, FraudFlag, ListingHistory
+    from models.database import User, NFT, Base, Listing, TransactionHistory, UserReputationEvent
 except ImportError:
     try:
-        from backend.models.database import User, NFT, Base, Listing, FraudFlag, ListingHistory
+        from backend.models.database import User, NFT, Base, Listing, TransactionHistory, UserReputationEvent
     except ImportError:
-        # Fallback models if import fails
-        class User(Base):
-            __tablename__ = "users"
-            
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            wallet_address = Column(String, unique=True, nullable=False)
-            email = Column(String, unique=True, nullable=False)
-            username = Column(String, nullable=False)
-            avatar_url = Column(String)
-            bio = Column(Text)
-            reputation_score = Column(DECIMAL(5, 2), default=0.0)
-            created_at = Column(DateTime, default=datetime.utcnow)
+        logger.error("Could not import database models")
+        raise
 
-        class NFT(Base):
-            __tablename__ = "nfts"
-            
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            owner_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-            wallet_address = Column(String, nullable=False)
-            title = Column(String, nullable=False)
-            description = Column(Text)
-            category = Column(String, nullable=False)
-            price = Column(DECIMAL(18, 8), nullable=False)
-            image_url = Column(String, nullable=False)
-            sui_object_id = Column(String, unique=True)
-            is_fraud = Column(Boolean, default=False)
-            confidence_score = Column(DECIMAL(5, 2), default=0.0)
-            flag_type = Column(Integer)
-            reason = Column(Text)
-            evidence_url = Column(Text)  # Store as JSON string for evidence URLs
-            analysis_details = Column(JSON)  # Use JSON type instead of Text for proper JSON storage
-            embedding_vector = Column(Vector(768))  # Gemini description embeddings are 768-dimensional
-            status = Column(String, default="pending")
-            created_at = Column(DateTime, default=datetime.utcnow)
-            
-            # Phase 2: Enhanced NFT columns
-            is_listed = Column(Boolean, default=False)
-            listing_price = Column(DECIMAL(18, 8))
-            last_listed_at = Column(DateTime)
-            listing_id = Column(Text)
-            listing_status = Column(Text, default="inactive")
-
-        class Listing(Base):
-            __tablename__ = "listings"
-            
-            id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-            nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=False)
-            seller_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-            price = Column(DECIMAL(18, 8), nullable=False)
-            expires_at = Column(DateTime)
-            status = Column(Text, default="active")
-            created_at = Column(DateTime, default=datetime.utcnow)
-            
-            # Phase 2: Enhanced Listing columns
-            blockchain_tx_id = Column(Text)
-            listing_id = Column(Text, unique=True)
-            updated_at = Column(DateTime, default=datetime.utcnow)
-            metadata = Column(JSON)  # JSONB type for metadata
-            listing_metadata = Column(JSON)  # JSONB type for listing metadata
-
-# Request/Response Models
+# Request/Response Models - Updated to match database.py structure
 class NFTCreationRequest(BaseModel):
     title: str
-    description: str
-    category: str
-    price: float
+    description: Optional[str] = None
+    category: Optional[str] = None
+    initial_price: Optional[float] = None
     image_url: str
-    wallet_address: str
+    creator_wallet_address: str
+    owner_wallet_address: str
+    metadata_url: Optional[str] = None
+    attributes: Optional[Dict[str, Any]] = None
 
 class NFTResponse(BaseModel):
     id: str
+    sui_object_id: Optional[str]
+    creator_wallet_address: str
+    owner_wallet_address: str
     title: str
     description: Optional[str]
-    category: str
-    price: float
     image_url: str
-    wallet_address: str
-    sui_object_id: Optional[str]
-    is_fraud: bool
-    confidence_score: float
-    status: str
+    metadata_url: Optional[str]
+    attributes: Optional[Dict[str, Any]]
+    category: Optional[str]
+    initial_price: Optional[float]
+    price: Optional[float] = None  # Current listing price
+    is_listed: bool = False  # Whether NFT is currently listed
+    is_fraud: bool = False  # Whether NFT is flagged as fraud
+    confidence_score: Optional[float] = None  # Fraud detection confidence
+    reason: Optional[str] = None  # Reason for fraud flag
+
+    embedding_vector: Optional[List[float]] = None  # For similarity search
+    analysis_details: Optional[Dict[str, Any]] = None
     created_at: datetime
-    analysis_details: Optional[Dict[str, Any]] = None  # Add analysis_details field
+    updated_at: datetime
+    wallet_address: Optional[str] = None  # Legacy field for frontend compatibility
     
     class Config:
         # Allow extra fields and arbitrary types to handle complex analysis_details
-        extra = "allow"
         arbitrary_types_allowed = True
 
 # Import database connection
 try:
     from database.connection import get_db
 except ImportError:
-    try:
-        from backend.database.connection import get_db
-    except ImportError:
-        # Fallback for development
-        def get_db():
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-            import os
-            
-            DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://user:pass@localhost/fraudguard")
-            engine = create_engine(DATABASE_URL)
-            SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-            db = SessionLocal()
-            try:
-                yield db
-            finally:
-                db.close()
+    from backend.database.connection import get_db
 
-router = APIRouter(prefix="/api/nft", tags=["nft"])
+# Create router
+router = APIRouter(prefix="/api/nft", tags=["NFT"])
+
+# Helper function to safely serialize analysis details
+def safe_serialize_analysis_details(analysis_details: Any) -> Dict[str, Any]:
+    """Safely serialize analysis details to ensure JSON compatibility"""
+    if analysis_details is None:
+        return {}
+    
+    try:
+        if isinstance(analysis_details, dict):
+            # Remove any non-serializable objects
+            serializable_dict = {}
+            for key, value in analysis_details.items():
+                try:
+                    json.dumps(value)
+                    serializable_dict[key] = value
+                except (TypeError, ValueError):
+                    # Convert non-serializable objects to strings
+                    serializable_dict[key] = str(value)
+            return serializable_dict
+        else:
+            return {"raw_data": str(analysis_details)}
+    except Exception as e:
+        logger.warning(f"Error serializing analysis details: {e}")
+        return {"error": "Serialization failed", "raw_data": str(analysis_details)}
+
+# Helper function to create NFTResponse with legacy compatibility
+def create_nft_response(nft, analysis_details=None, db=None):
+    """Create NFTResponse with automatic legacy field population"""
+    if analysis_details is None and nft.analysis_details:
+        analysis_details = safe_serialize_analysis_details(nft.analysis_details)
+    
+    # Get current listing info if db is provided
+    current_listing = None
+    if db:
+        current_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == nft.id,
+                Listing.status == "active"
+            )
+        ).first()
+    
+    # Extract fraud detection info from analysis_details
+    is_fraud = False
+    confidence_score = None
+    reason = None
+    if analysis_details:
+        is_fraud = analysis_details.get('is_fraud', False)
+        confidence_score = analysis_details.get('confidence_score')
+        reason = analysis_details.get('reason')
+    
+    return NFTResponse(
+        id=str(nft.id),
+        sui_object_id=nft.sui_object_id,
+        creator_wallet_address=nft.creator_wallet_address,
+        owner_wallet_address=nft.owner_wallet_address,
+        title=nft.title,
+        description=nft.description,
+        image_url=nft.image_url,
+        metadata_url=nft.metadata_url,
+        attributes=nft.attributes,
+        category=nft.category,
+        initial_price=float(nft.initial_price) if nft.initial_price else None,
+        price=float(current_listing.price) if current_listing else None,
+        is_listed=nft.is_listed,
+        is_fraud=is_fraud,
+        confidence_score=confidence_score,
+        reason=reason,
+        status="minted",
+        analysis_details=analysis_details,
+        created_at=nft.created_at,
+        updated_at=nft.updated_at,
+        wallet_address=nft.creator_wallet_address  # Legacy compatibility
+    )
+
+async def analyze_nft_for_fraud_with_db_update(nft_data: NFTData, nft_id: str):
+    """Helper function to run fraud analysis and update database"""
+    try:
+        from database.connection import get_db
+        db_gen = get_db()
+        db = next(db_gen)
+        
+        try:
+            # Run fraud analysis with database update
+            await analyze_nft_for_fraud(nft_data, nft_id, db)
+        finally:
+            db.close()
+    except Exception as e:
+        logger.error(f"Error in background fraud analysis for NFT {nft_id}: {e}")
 
 @router.post("/create")
 async def create_nft(
@@ -187,221 +212,76 @@ async def create_nft(
     db: Session = Depends(get_db)
 ):
     """
-    Create a new NFT following the 8-step workflow:
-    1. User Inputs (handled by frontend)
-    2. Upload Image to Walrus (handled by /api/upload-walrus endpoint)
-    3. AI Fraud Detection (this function)
-    4. Supabase: Store Metadata & Embedding (this function)
-    5. Mint NFT on Sui (handled by frontend + confirm-mint endpoint)
-    6. List NFT for Sale (handled by frontend)
-    7. Buyer Purchases NFT (handled by frontend)
-    8. Sync Supabase with Chain (handled by webhook/indexer)
+    Create a new NFT with fraud analysis
+    Step 1 of the 8-step workflow
     """
+    nft = None  # Initialize nft to None to prevent UnboundLocalError
     try:
+        # Validate wallet addresses
+        if not request.creator_wallet_address or not request.owner_wallet_address:
+            raise HTTPException(status_code=400, detail="Creator and owner wallet addresses are required")
+        
         # Check if user exists, create if not
-        user = db.query(User).filter(User.wallet_address == request.wallet_address).first()
+        user = db.query(User).filter(User.wallet_address == request.creator_wallet_address).first()
         if not user:
-            # Create a default user profile
             user = User(
-                wallet_address=request.wallet_address,
-                email=f"{request.wallet_address[:8]}@temp.com",
-                username=f"User{request.wallet_address[:8]}",
+                wallet_address=request.creator_wallet_address,
+                username=f"User{request.creator_wallet_address[:8]}",
                 reputation_score=50.0
             )
             db.add(user)
             db.commit()
             db.refresh(user)
-
-        # Step 3: AI Fraud Detection
-        logger.info(f"Running fraud analysis for NFT: {request.title}")
         
+        # Create NFT data for fraud analysis
         nft_data = NFTData(
             title=request.title,
             description=request.description or "",
             image_url=request.image_url,
-            category=request.category,
-            price=request.price
+            category=request.category or "Uncategorized",
+            price=request.initial_price or 0.0
         )
         
-        # Run fraud analysis (async call) with better error handling
-        try:
-            fraud_result = await analyze_nft_for_fraud(nft_data)
-            logger.info(f"Fraud analysis completed: is_fraud={fraud_result.get('is_fraud')}, confidence={fraud_result.get('confidence_score')}")
-        except Exception as fraud_error:
-            logger.error(f"Fraud analysis failed: {fraud_error}")
-            # Use safe defaults if fraud analysis fails
-            fraud_result = {
-                "is_fraud": False,
-                "confidence_score": 0.1,
-                "flag_type": None,
-                "reason": f"Fraud analysis error: {str(fraud_error)}",
-                "analysis_details": {"error": str(fraud_error)}
-            }
-        
-        # Generate image embedding for similarity search using Gemini description analysis
-        logger.info(f"Generating description-based embedding for image: {request.image_url}")
-        embedding_service = get_embedding_service()
-        image_embedding = None
-        
-        if embedding_service:
-            try:
-                # Use Gemini to analyze image and generate description, then embed the description
-                image_embedding = await embedding_service.get_image_embedding(request.image_url)
-                
-                if image_embedding:
-                    logger.info(f"Successfully generated description-based embedding with dimension: {len(image_embedding)}")
-                else:
-                    logger.warning("Failed to generate description-based embedding, using None")
-            except Exception as embed_error:
-                logger.error(f"Error generating embedding: {embed_error}")
-                image_embedding = None
-        else:
-            logger.warning("Description embedding service not available, storing without embedding")
-        
-        # Step 4: Supabase: Store Metadata & Embedding
-        # Ensure fraud_result has required fields
-        if not isinstance(fraud_result, dict):
-            fraud_result = {
-                "is_fraud": False,
-                "confidence_score": 0.1,
-                "flag_type": None,
-                "reason": "Invalid fraud analysis result",
-                "analysis_details": {}
-            }
-        
-        # Validate and sanitize fraud result fields
-        is_fraud = bool(fraud_result.get("is_fraud", False))
-        confidence_score = float(fraud_result.get("confidence_score", 0.0))
-        flag_type = fraud_result.get("flag_type")
-        reason = str(fraud_result.get("reason", "Analysis completed"))
-        analysis_details = fraud_result.get("analysis_details", {})
-        
-        # Safely serialize analysis_details to ensure JSON compatibility
-        try:
-            analysis_details = safe_serialize_analysis_details(analysis_details)
-        except Exception as serialization_error:
-            logger.error(f"Error serializing analysis_details: {serialization_error}")
-            # Fallback to a safe default
-            analysis_details = {
-                "error": f"Serialization failed: {str(serialization_error)}",
-                "raw_data": str(analysis_details)
-            }
-        
-        # Extract evidence URLs from similarity results for storage in evidence_url field
-        evidence_urls = []
-        if analysis_details.get("similarity_results") and analysis_details["similarity_results"].get("evidence_urls"):
-            evidence_urls = analysis_details["similarity_results"]["evidence_urls"]
-        
-        # Store evidence URLs as JSON array in evidence_url field
-        evidence_url_json = json.dumps(evidence_urls) if evidence_urls else None
-        
-        # Create NFT with status "pending" initially
+        # Create NFT record
         nft = NFT(
-            owner_id=user.id,
-            wallet_address=request.wallet_address,
+            creator_wallet_address=request.creator_wallet_address,
+            owner_wallet_address=request.owner_wallet_address,
             title=request.title,
             description=request.description,
-            category=request.category,
-            price=request.price,
             image_url=request.image_url,
-            is_fraud=is_fraud,
-            confidence_score=confidence_score,
-            flag_type=flag_type,
-            reason=reason,
-            evidence_url=evidence_url_json,  # Store evidence URLs as JSON array
-            analysis_details=analysis_details,  # Store as JSON object
-            embedding_vector=image_embedding,  # Store description-based embedding as vector
-            status="pending"  # Start with pending status
+            metadata_url=request.metadata_url,
+            attributes=request.attributes,
+            category=request.category,
+            initial_price=request.initial_price,
+            is_listed=False,  # Default to unlisted after minting
+            sui_object_id=f"temp_{uuid.uuid4()}",  # Temporary ID until minted on blockchain
+            analysis_details={
+                "status": "pending",
+                "created_at": datetime.now().isoformat()
+            }
         )
         
-        logger.info(f"About to add NFT to database: {nft.title}")
         db.add(nft)
+        db.commit()
+        db.refresh(nft)
         
-        logger.info(f"About to commit NFT to database: {nft.title}")
-        try:
-            db.commit()
-            logger.info(f"Successfully committed NFT to database: {nft.title}")
-        except Exception as commit_error:
-            logger.error(f"Failed to commit NFT to database: {commit_error}")
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"Database commit failed: {str(commit_error)}")
+        # Run fraud analysis in background with database update (AFTER NFT is created)
+        background_tasks.add_task(analyze_nft_for_fraud_with_db_update, nft_data, str(nft.id))
         
-        logger.info(f"About to refresh NFT from database: {nft.title}")
-        try:
-            db.refresh(nft)
-            logger.info(f"Successfully refreshed NFT from database: {nft.title}")
-        except Exception as refresh_error:
-            logger.error(f"Failed to refresh NFT from database: {refresh_error}")
-            # Don't fail the request if refresh fails, but log the issue
-            logger.warning(f"Continuing without refresh - NFT ID: {nft.id}")
+        logger.info(f"Created NFT: {nft.id} with title: {request.title}")
         
-        # Verify the NFT was actually committed by querying it back
-        try:
-            verification_nft = db.query(NFT).filter(NFT.id == nft.id).first()
-            if verification_nft:
-                logger.info(f"Verified NFT exists in database: {verification_nft.id} with status: {verification_nft.status}")
-            else:
-                logger.error(f"CRITICAL: NFT not found in database after commit! ID: {nft.id}")
-        except Exception as verify_error:
-            logger.error(f"Failed to verify NFT in database: {verify_error}")
-        
-        # Check database session status
-        try:
-            # Check if session is still active
-            from sqlalchemy import text
-            db.execute(text("SELECT 1"))
-            logger.info("Database session is still active")
-        except Exception as session_error:
-            logger.error(f"Database session error: {session_error}")
-
-        # Log successful creation before any background tasks
-        logger.info(f"NFT created successfully: {nft.id} with status: {nft.status}")
-        
-        # Prepare response data
-        response_data = {
+        return {
             "success": True,
-            "message": "NFT created and analyzed successfully",
             "nft_id": str(nft.id),
-            "fraud_analysis": {
-                "is_fraud": is_fraud,
-                "confidence_score": confidence_score,
-                "flag_type": flag_type,
-                "reason": reason
-            },
-            "status": "pending",  # Return current status
-            "next_step": "mint_on_blockchain"  # Guide frontend on next step
+            "message": "NFT created successfully. Fraud analysis in progress.",
+            "status": "pending_analysis"
         }
         
-        # Schedule background task for Supabase embedding storage (optional)
-        if embedding_service and image_embedding and supabase_client:
-            metadata = {
-                "name": request.title,
-                "creator": request.wallet_address,
-                "image_url": request.image_url,
-                "nft_id": str(nft.id)
-            }
-            
-            try:
-                # Schedule the background task without blocking the response
-                background_tasks.add_task(
-                    embedding_service.get_image_embedding_and_store,
-                    request.image_url, 
-                    str(nft.id), 
-                    metadata
-                )
-                logger.info(f"Scheduled embedding storage in Supabase for NFT {nft.id}")
-            except Exception as bg_error:
-                logger.warning(f"Failed to schedule background task: {bg_error}")
-                # Don't fail the request if background task scheduling fails
-
-        return response_data
-
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error creating NFT: {str(e)}")
-        try:
-            db.rollback()
-        except:
-            pass  # Ignore rollback errors
+        nft_id_str = str(nft.id) if nft and hasattr(nft, 'id') else "N/A (NFT not created)"
+        logger.error(f"Error creating NFT (ID: {nft_id_str}): {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error creating NFT: {str(e)}")
 
 @router.put("/{nft_id}/confirm-mint")
@@ -411,154 +291,111 @@ async def confirm_nft_mint(
     db: Session = Depends(get_db)
 ):
     """
-    Confirm NFT has been minted on blockchain
+    Confirm NFT minting on blockchain
+    Step 2 of the 8-step workflow
     """
     try:
-        # Validate input
-        if not nft_id or not sui_object_id:
-            raise HTTPException(status_code=400, detail="nft_id and sui_object_id are required")
+        # Validate UUID format
+        try:
+            uuid.UUID(nft_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid NFT ID format")
         
-        # Find the NFT
         nft = db.query(NFT).filter(NFT.id == nft_id).first()
         if not nft:
-            raise HTTPException(status_code=404, detail=f"NFT not found with ID: {nft_id}")
+            raise HTTPException(status_code=404, detail="NFT not found")
         
-        logger.info(f"Confirming mint for NFT {nft_id} with Sui object ID: {sui_object_id}")
+        # Update NFT with real Sui object ID (replacing temporary ID)
+        nft.sui_object_id = sui_object_id
+        db.commit()
         
-        # Check current status
-        if nft.status == "minted":
-            logger.info(f"NFT {nft_id} already minted, returning existing data")
-            return {
-                "success": True,
-                "message": "NFT already minted",
-                "nft_id": nft_id,
-                "sui_object_id": nft.sui_object_id,
-                "status": "minted"
-            }
+        logger.info(f"Confirmed mint for NFT {nft_id} with Sui object ID: {sui_object_id}")
         
-        # Update NFT with Sui object ID and change status to minted
-        # DEFAULT IS UNLISTED (changed from automatic listing)
-        try:
-            nft.sui_object_id = sui_object_id
-            nft.status = "minted"
-            # NFT is unlisted by default when minted
-            nft.is_listed = False
-            nft.listing_price = None
-            nft.last_listed_at = None
-            nft.listing_status = "inactive"
-            
-            db.commit()
-            db.refresh(nft)
-            
-            logger.info(f"NFT mint confirmed and set as unlisted by default: {nft_id} -> {sui_object_id}")
-
-            return {
-                "success": True,
-                "message": "NFT mint confirmed and set as unlisted by default",
-                "nft_id": nft_id,
-                "sui_object_id": sui_object_id,
-                "status": "minted",
-                "is_listed": False,
-                "fraud_analysis": {
-                    "is_fraud": nft.is_fraud,
-                    "confidence_score": float(nft.confidence_score or 0.0),
-                    "flag_type": nft.flag_type,
-                    "reason": nft.reason
-                }
-            }
-            
-        except Exception as commit_error:
-            logger.error(f"Database commit error: {commit_error}")
-            db.rollback()
-            raise HTTPException(status_code=500, detail=f"Database error: {str(commit_error)}")
-
+        return {
+            "success": True,
+            "nft_id": str(nft.id),
+            "sui_object_id": sui_object_id,
+            "message": "NFT minting confirmed"
+        }
+        
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except Exception as e:
-        logger.error(f"Error confirming mint for {nft_id}: {str(e)}")
-        try:
-            db.rollback()
-        except:
-            pass
-        raise HTTPException(status_code=500, detail=f"Error confirming mint: {str(e)}")
+        logger.error(f"Error confirming NFT mint: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error confirming NFT mint: {str(e)}")
 
 @router.get("/user/{wallet_address}")
 async def get_user_nfts(
     wallet_address: str,
     db: Session = Depends(get_db)
 ):
-    """Get all NFTs owned by a user (for My NFTs tab)"""
+    """
+    Get all NFTs owned by a specific wallet address
+    """
     try:
-        logger.info(f"Fetching NFTs for wallet: {wallet_address}")
+        # Get NFTs where the user is either creator or owner
+        nfts = db.query(NFT).filter(
+            or_(
+                NFT.creator_wallet_address == wallet_address,
+                NFT.owner_wallet_address == wallet_address
+            )
+        ).all()
         
-        # Find user by wallet address
-        user = db.query(User).filter(User.wallet_address == wallet_address).first()
-        if not user:
-            logger.warning(f"User not found for wallet: {wallet_address}")
-            return {
-                "wallet_address": wallet_address,
-                "user_found": False,
-                "nfts": [],
-                "total": 0,
-                "message": "User not found"
-            }
-        
-        logger.info(f"Found user {user.id} for wallet: {wallet_address}")
-        
-        # Get user's NFTs
-        nfts = db.query(NFT).filter(NFT.owner_id == user.id).all()
-        logger.info(f"Found {len(nfts)} NFTs for user {user.id}")
-        
-        # Convert to serializable format
-        nft_list = []
+        nft_responses = []
         for nft in nfts:
-            try:
-                # Safely handle analysis_details
-                analysis_details = None
-                if nft.analysis_details:
-                    try:
-                        analysis_details = safe_serialize_analysis_details(nft.analysis_details)
-                    except Exception as e:
-                        logger.warning(f"Error serializing analysis_details for NFT {nft.id}: {e}")
-                        analysis_details = {"error": "Serialization failed"}
-                
-                nft_dict = {
-                    "id": str(nft.id),
-                    "title": nft.title,
-                    "description": nft.description,
-                    "category": nft.category,
-                    "price": float(nft.price) if nft.price else 0.0,
-                    "image_url": nft.image_url,
-                    "wallet_address": nft.wallet_address,
-                    "sui_object_id": nft.sui_object_id,
-                    "is_fraud": nft.is_fraud,
-                    "is_listed": nft.is_listed,  # Include listing status
-                    "confidence_score": float(nft.confidence_score or 0.0),
-                    "flag_type": nft.flag_type,
-                    "reason": nft.reason,
-                    "status": nft.status,
-                    "created_at": nft.created_at.isoformat() if nft.created_at else None,
-                    "analysis_details": analysis_details
-                }
-                nft_list.append(nft_dict)
-                logger.debug(f"Added NFT {nft.id} - {nft.title} to response")
-            except Exception as e:
-                logger.error(f"Error processing NFT {nft.id}: {e}")
-                continue
-        
-        logger.info(f"Returning {len(nft_list)} NFTs for wallet {wallet_address}")
+            # Safely serialize analysis_details
+            analysis_details = None
+            if nft.analysis_details:
+                analysis_details = safe_serialize_analysis_details(nft.analysis_details)
+            
+            # Get current listing info
+            current_listing = db.query(Listing).filter(
+                and_(
+                    Listing.nft_id == nft.id,
+                    Listing.status == "active"
+                )
+            ).first()
+            
+            # Extract fraud detection info from analysis_details
+            is_fraud = False
+            confidence_score = None
+            reason = None
+            if analysis_details:
+                is_fraud = analysis_details.get('is_fraud', False)
+                confidence_score = analysis_details.get('confidence_score')
+                reason = analysis_details.get('reason')
+            
+            nft_responses.append(NFTResponse(
+                id=str(nft.id),
+                sui_object_id=nft.sui_object_id,
+                creator_wallet_address=nft.creator_wallet_address,
+                owner_wallet_address=nft.owner_wallet_address,
+                title=nft.title,
+                description=nft.description,
+                image_url=nft.image_url,
+                metadata_url=nft.metadata_url,
+                attributes=nft.attributes,
+                category=nft.category,
+                initial_price=float(nft.initial_price) if nft.initial_price else None,
+                price=float(current_listing.price) if current_listing else None,
+                is_listed=nft.is_listed,
+                is_fraud=is_fraud,
+                confidence_score=confidence_score,
+                reason=reason,
+                analysis_details=analysis_details,
+                created_at=nft.created_at,
+                updated_at=nft.updated_at
+            ))
         
         return {
-            "wallet_address": wallet_address,
-            "user_found": True,
-            "nfts": nft_list,
-            "total": len(nft_list)
+            "nfts": nft_responses,
+            "total": len(nft_responses),
+            "wallet_address": wallet_address
         }
         
     except Exception as e:
-        logger.error(f"Error fetching NFTs for user {wallet_address}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to fetch user NFTs")
+        logger.error(f"Error getting user NFTs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting user NFTs: {str(e)}")
 
 @router.get("/by-wallet/{wallet_address}")
 async def get_nfts_by_wallet(
@@ -568,145 +405,139 @@ async def get_nfts_by_wallet(
     db: Session = Depends(get_db)
 ):
     """
-    Get all NFTs owned by a specific wallet address
+    Get NFTs by wallet address with pagination
     """
     try:
         offset = (page - 1) * limit
         
+        # Get total count
+        total_count = db.query(NFT).filter(
+            or_(
+                NFT.creator_wallet_address == wallet_address,
+                NFT.owner_wallet_address == wallet_address
+            )
+        ).count()
+        
+        # Get paginated results
         nfts = db.query(NFT).filter(
-            NFT.wallet_address == wallet_address
-        ).order_by(NFT.created_at.desc()).offset(offset).limit(limit).all()
+            or_(
+                NFT.creator_wallet_address == wallet_address,
+                NFT.owner_wallet_address == wallet_address
+            )
+        ).offset(offset).limit(limit).all()
         
-        total = db.query(NFT).filter(NFT.wallet_address == wallet_address).count()
-        
-        nft_list = []
+        nft_responses = []
         for nft in nfts:
-            try:
-                # Safely handle analysis_details
-                analysis_details = None
-                if nft.analysis_details:
-                    try:
-                        analysis_details = safe_serialize_analysis_details(nft.analysis_details)
-                    except Exception as e:
-                        logger.warning(f"Error serializing analysis_details for NFT {nft.id}: {e}")
-                        analysis_details = {"error": "Serialization failed"}
-                
-                nft_list.append({
-                    "id": str(nft.id),
-                    "title": nft.title,
-                    "description": nft.description,
-                    "category": nft.category,
-                    "price": float(nft.price) if nft.price else 0.0,
-                    "image_url": nft.image_url,
-                    "wallet_address": nft.wallet_address,
-                    "sui_object_id": nft.sui_object_id,
-                    "is_fraud": nft.is_fraud,
-                    "confidence_score": float(nft.confidence_score or 0.0),
-                    "flag_type": nft.flag_type,
-                    "reason": nft.reason,
-                    "status": nft.status,
-                    "created_at": nft.created_at,
-                    "analysis_details": analysis_details
-                })
-            except Exception as e:
-                logger.error(f"Error processing NFT {nft.id}: {e}")
-                continue
+            # Safely serialize analysis_details
+            analysis_details = None
+            if nft.analysis_details:
+                analysis_details = safe_serialize_analysis_details(nft.analysis_details)
+            
+            nft_responses.append(NFTResponse(
+                id=str(nft.id),
+                sui_object_id=nft.sui_object_id,
+                creator_wallet_address=nft.creator_wallet_address,
+                owner_wallet_address=nft.owner_wallet_address,
+                title=nft.title,
+                description=nft.description,
+                image_url=nft.image_url,
+                metadata_url=nft.metadata_url,
+                attributes=nft.attributes,
+                category=nft.category,
+                initial_price=float(nft.initial_price) if nft.initial_price else None,
+                analysis_details=analysis_details,
+                created_at=nft.created_at,
+                updated_at=nft.updated_at
+            ))
         
         return {
-            "wallet_address": wallet_address,
-            "nfts": nft_list,
-            "total": total,
+            "nfts": nft_responses,
+            "total": total_count,
             "page": page,
             "limit": limit,
-            "total_pages": math.ceil(total / limit) if total > 0 else 0
+            "total_pages": math.ceil(total_count / limit),
+            "wallet_address": wallet_address
         }
-
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching NFTs for wallet: {str(e)}")
-
+        logger.error(f"Error getting NFTs by wallet: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting NFTs by wallet: {str(e)}")
 
 @router.get("/marketplace")
 async def get_marketplace_nfts(
     page: int = 1,
     limit: int = 20,
-    include_flagged: bool = False,
-    include_pending: bool = False,
     db: Session = Depends(get_db)
 ):
     """
-    Get all NFTs for marketplace display
+    Get NFTs available in marketplace (with listings)
     """
     try:
         offset = (page - 1) * limit
         
-        # Base query - include both minted and optionally pending NFTs
-        if include_pending:
-            # Include both pending and minted NFTs that are listed
-            query = db.query(NFT).filter(
-                NFT.status.in_(["minted", "pending"]),
-                NFT.is_listed == True  # Only show listed NFTs
-            )
-        else:
-            # Only minted NFTs that are listed for sale (default behavior)
-            query = db.query(NFT).filter(
-                NFT.status == "minted",
-                NFT.is_listed == True  # Only show listed NFTs
-            )
+        # Get NFTs that have active listings
+        query = db.query(NFT).join(Listing).filter(
+            Listing.status == "active"
+        )
         
-        # Optionally exclude fraud-flagged NFTs from marketplace
-        if not include_flagged:
-            query = query.filter(NFT.is_fraud == False)
+        total_count = query.count()
+        nfts = query.offset(offset).limit(limit).all()
         
-        nfts = query.order_by(NFT.created_at.desc()).offset(offset).limit(limit).all()
-        total = query.count()
-        
-        nft_list = []
+        nft_responses = []
         for nft in nfts:
-            try:
-                # Safely handle analysis_details
-                analysis_details = None
-                if nft.analysis_details:
-                    try:
-                        analysis_details = safe_serialize_analysis_details(nft.analysis_details)
-                    except Exception as e:
-                        logger.warning(f"Error serializing analysis_details for NFT {nft.id}: {e}")
-                        analysis_details = {"error": "Serialization failed"}
-                
-                nft_response = NFTResponse(
-                    id=str(nft.id),
-                    title=nft.title,
-                    description=nft.description,
-                    category=nft.category,
-                    price=float(nft.price) if nft.price else 0.0,
-                    image_url=nft.image_url,
-                    wallet_address=nft.wallet_address,
-                    sui_object_id=nft.sui_object_id,
-                    is_fraud=nft.is_fraud,
-                    confidence_score=float(nft.confidence_score or 0.0),
-                    status=nft.status,
-                    created_at=nft.created_at,
-                    analysis_details=analysis_details
+            # Get the active listing for this NFT
+            listing = db.query(Listing).filter(
+                and_(
+                    Listing.nft_id == nft.id,
+                    Listing.status == "active"
                 )
-                nft_list.append(nft_response)
-            except Exception as e:
-                logger.error(f"Error processing NFT {nft.id}: {e}")
-                continue
+            ).first()
+            
+            # Safely serialize analysis_details
+            analysis_details = None
+            if nft.analysis_details:
+                analysis_details = safe_serialize_analysis_details(nft.analysis_details)
+            
+            nft_response = NFTResponse(
+                id=str(nft.id),
+                sui_object_id=nft.sui_object_id,
+                creator_wallet_address=nft.creator_wallet_address,
+                owner_wallet_address=nft.owner_wallet_address,
+                title=nft.title,
+                description=nft.description,
+                image_url=nft.image_url,
+                metadata_url=nft.metadata_url,
+                attributes=nft.attributes,
+                category=nft.category,
+                initial_price=float(nft.initial_price) if nft.initial_price else None,
+                analysis_details=analysis_details,
+                created_at=nft.created_at,
+                updated_at=nft.updated_at
+            )
+            
+            # Add listing information
+            nft_responses.append({
+                "nft": nft_response,
+                "listing": {
+                    "id": str(listing.id) if listing else None,
+                    "price": float(listing.price) if listing else None,
+                    "seller": listing.seller_wallet_address if listing else None,
+                    "status": listing.status if listing else None,
+                    "created_at": listing.created_at if listing else None
+                } if listing else None
+            })
         
         return {
-            "nfts": nft_list,
-            "total": total,
+            "nfts": nft_responses,
+            "total": total_count,
             "page": page,
             "limit": limit,
-            "total_pages": math.ceil(total / limit) if total > 0 else 0,
-            "include_flagged": include_flagged,
-            "include_pending": include_pending,
-            "status_filter": "minted" if not include_pending else "minted,pending"
+            "total_pages": math.ceil(total_count / limit)
         }
-
+        
     except Exception as e:
-        logger.error(f"Error fetching marketplace NFTs: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error fetching marketplace NFTs: {str(e)}")
-
+        logger.error(f"Error getting marketplace NFTs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting marketplace NFTs: {str(e)}")
 
 @router.get("/all")
 async def get_all_nfts(
@@ -716,52 +547,64 @@ async def get_all_nfts(
     db: Session = Depends(get_db)
 ):
     """
-    Get all NFTs (for debugging and admin purposes)
+    Get all NFTs with optional filtering
     """
     try:
         offset = (page - 1) * limit
         
         query = db.query(NFT)
+        
+        # Apply status filter if provided
         if status:
-            query = query.filter(NFT.status == status)
+            # Note: status field doesn't exist in database model, so we'll filter by analysis_details status
+            if status == "analyzed":
+                query = query.filter(NFT.analysis_details.isnot(None))
+            elif status == "pending":
+                query = query.filter(
+                    or_(
+                        NFT.analysis_details.is_(None),
+                        NFT.analysis_details.contains({"status": "pending"})
+                    )
+                )
         
-        nfts = query.order_by(NFT.created_at.desc()).offset(offset).limit(limit).all()
-        total = query.count()
+        total_count = query.count()
+        nfts = query.offset(offset).limit(limit).all()
         
-        nft_list = []
+        nft_responses = []
         for nft in nfts:
-            try:
-                nft_list.append({
-                    "id": str(nft.id),
-                    "title": nft.title,
-                    "description": nft.description,
-                    "category": nft.category,
-                    "price": float(nft.price) if nft.price else 0.0,
-                    "image_url": nft.image_url,
-                    "wallet_address": nft.wallet_address,
-                    "sui_object_id": nft.sui_object_id,
-                    "is_fraud": nft.is_fraud,
-                    "confidence_score": float(nft.confidence_score or 0.0),
-                    "flag_type": nft.flag_type,
-                    "reason": nft.reason,
-                    "status": nft.status,
-                    "created_at": nft.created_at
-                })
-            except Exception as e:
-                logger.error(f"Error processing NFT {nft.id}: {e}")
-                continue
+            # Safely serialize analysis_details
+            analysis_details = None
+            if nft.analysis_details:
+                analysis_details = safe_serialize_analysis_details(nft.analysis_details)
+            
+            nft_responses.append(NFTResponse(
+                id=str(nft.id),
+                sui_object_id=nft.sui_object_id,
+                creator_wallet_address=nft.creator_wallet_address,
+                owner_wallet_address=nft.owner_wallet_address,
+                title=nft.title,
+                description=nft.description,
+                image_url=nft.image_url,
+                metadata_url=nft.metadata_url,
+                attributes=nft.attributes,
+                category=nft.category,
+                initial_price=float(nft.initial_price) if nft.initial_price else None,
+                analysis_details=analysis_details,
+                created_at=nft.created_at,
+                updated_at=nft.updated_at
+            ))
         
         return {
-            "nfts": nft_list,
-            "total": total,
+            "nfts": nft_responses,
+            "total": total_count,
             "page": page,
             "limit": limit,
-            "total_pages": math.ceil(total / limit) if total > 0 else 0,
-            "filter_status": status
+            "total_pages": math.ceil(total_count / limit)
         }
-
+        
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching all NFTs: {str(e)}")
+        logger.error(f"Error getting all NFTs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting all NFTs: {str(e)}")
 
 @router.get("/{nft_id}")
 async def get_nft_details(
@@ -769,49 +612,93 @@ async def get_nft_details(
     db: Session = Depends(get_db)
 ):
     """
-    Get detailed information about a specific NFT
+    Get detailed information for a specific NFT
     """
     try:
+        # Validate UUID format
+        try:
+            uuid.UUID(nft_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid NFT ID format")
+        
         nft = db.query(NFT).filter(NFT.id == nft_id).first()
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
-        user = db.query(User).filter(User.id == nft.owner_id).first()
+        # Get user information
+        creator_user = db.query(User).filter(User.wallet_address == nft.creator_wallet_address).first()
+        owner_user = db.query(User).filter(User.wallet_address == nft.owner_wallet_address).first()
         
-        # Safely handle analysis_details
+        # Safely serialize analysis_details
         analysis_details = None
         if nft.analysis_details:
-            try:
-                analysis_details = safe_serialize_analysis_details(nft.analysis_details)
-            except Exception as e:
-                logger.warning(f"Error serializing analysis_details for NFT {nft.id}: {e}")
-                analysis_details = {"error": "Serialization failed"}
+            analysis_details = safe_serialize_analysis_details(nft.analysis_details)
+        
+        # Get active listing if exists
+        active_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == nft.id,
+                Listing.status == "active"
+            )
+        ).first()
+        
+        # Extract fraud detection info from analysis_details
+        is_fraud = False
+        confidence_score = None
+        reason = None
+        if analysis_details:
+            is_fraud = analysis_details.get('is_fraud', False)
+            confidence_score = analysis_details.get('confidence_score')
+            reason = analysis_details.get('reason')
         
         return {
             "nft": NFTResponse(
                 id=str(nft.id),
+                sui_object_id=nft.sui_object_id,
+                creator_wallet_address=nft.creator_wallet_address,
+                owner_wallet_address=nft.owner_wallet_address,
                 title=nft.title,
                 description=nft.description,
-                category=nft.category,
-                price=float(nft.price) if nft.price else 0.0,
                 image_url=nft.image_url,
-                wallet_address=nft.wallet_address,
-                sui_object_id=nft.sui_object_id,
-                is_fraud=nft.is_fraud,
-                confidence_score=float(nft.confidence_score or 0.0),
-                status=nft.status,
+                metadata_url=nft.metadata_url,
+                attributes=nft.attributes,
+                category=nft.category,
+                initial_price=float(nft.initial_price) if nft.initial_price else None,
+                price=float(active_listing.price) if active_listing else None,
+                is_listed=nft.is_listed,
+                is_fraud=is_fraud,
+                confidence_score=confidence_score,
+                reason=reason,
+                status="minted",
+                analysis_details=analysis_details,
                 created_at=nft.created_at,
-                analysis_details=analysis_details
+                updated_at=nft.updated_at
             ),
+            "creator": {
+                "wallet_address": nft.creator_wallet_address,
+                "username": creator_user.username if creator_user else f"User{nft.creator_wallet_address[:8]}",
+                "reputation_score": float(creator_user.reputation_score) if creator_user else 50.0
+            },
             "owner": {
-                "wallet_address": user.wallet_address if user else nft.wallet_address,
-                "username": user.username if user else f"User{nft.wallet_address[:8]}",
-                "reputation_score": float(user.reputation_score) if user else 50.0
-            }
+                "wallet_address": nft.owner_wallet_address,
+                "username": owner_user.username if owner_user else f"User{nft.owner_wallet_address[:8]}",
+                "reputation_score": float(owner_user.reputation_score) if owner_user else 50.0
+            },
+            "listing": {
+                "id": str(active_listing.id),
+                "price": float(active_listing.price),
+                "seller": active_listing.seller_wallet_address,
+                "status": active_listing.status,
+                "created_at": active_listing.created_at,
+                "expires_at": active_listing.expires_at
+            } if active_listing else None
         }
-
+        
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error fetching NFT details: {str(e)}")
+        logger.error(f"Error getting NFT details: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting NFT details: {str(e)}")
 
 @router.get("/{nft_id}/analysis")
 async def get_nft_analysis_details(
@@ -825,7 +712,6 @@ async def get_nft_analysis_details(
     try:
         # Validate UUID format
         try:
-            import uuid
             uuid.UUID(nft_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid NFT ID format")
@@ -836,10 +722,6 @@ async def get_nft_analysis_details(
             return {
                 "nft_id": nft_id,
                 "analysis_details": {},
-                "is_fraud": False,
-                "confidence_score": 0.0,
-                "flag_type": None,
-                "reason": "NFT not found",
                 "status": "not_found",
                 "analyzed_at": None,
                 "message": "NFT not found"
@@ -861,12 +743,8 @@ async def get_nft_analysis_details(
         return {
             "nft_id": str(nft.id),
             "analysis_details": analysis_details,
-            "is_fraud": nft.is_fraud,
-            "confidence_score": float(nft.confidence_score or 0.0),
-            "flag_type": nft.flag_type,
-            "reason": nft.reason,
-            "status": nft.status,
-            "analyzed_at": nft.created_at.isoformat() if nft.created_at else None
+            "status": analysis_details.get("status", "unknown"),
+            "analyzed_at": analysis_details.get("analyzed_at") or nft.created_at.isoformat() if nft.created_at else None
         }
 
     except HTTPException:
@@ -875,7 +753,6 @@ async def get_nft_analysis_details(
     except Exception as e:
         logger.error(f"Error fetching NFT analysis details: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error fetching NFT analysis details: {str(e)}")
-
 
 # New model for frontend notifications
 class NFTMintedNotification(BaseModel):
@@ -886,7 +763,6 @@ class NFTMintedNotification(BaseModel):
     image_url: str
     creator: str
     transaction_digest: str
-
 
 @router.post("/notify-minted")
 async def notify_nft_minted(
@@ -907,19 +783,17 @@ async def notify_nft_minted(
         if existing_nft:
             # Update existing NFT with Sui object ID
             existing_nft.sui_object_id = notification.sui_object_id
-            existing_nft.status = "minted"
             db.commit()
             logger.info(f"Updated existing NFT {notification.nft_id} with Sui object ID")
         else:
             # This is a new NFT minted directly on chain, analyze it
             logger.info(f"New NFT minted on chain: {notification.sui_object_id}")
             
-            # Run fraud analysis in background
-            background_tasks.add_task(
-                analyze_external_nft, 
-                notification, 
-                db
-            )
+                    # Run fraud analysis in background with database update
+        background_tasks.add_task(
+            analyze_external_nft_with_db_update, 
+            notification
+        )
         
         return {
             "success": True,
@@ -932,74 +806,86 @@ async def notify_nft_minted(
         logger.error(f"Error processing minted NFT notification: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error processing notification: {str(e)}")
 
-
-async def analyze_external_nft(notification: NFTMintedNotification, db: Session):
-    """Analyze NFT that was minted directly on chain (not through our frontend)"""
+async def analyze_external_nft_with_db_update(notification: NFTMintedNotification):
+    """Analyze NFT that was minted directly on chain (not through our frontend) with database update"""
     try:
-        # Create user if not exists
-        user = db.query(User).filter(User.wallet_address == notification.creator).first()
-        if not user:
-            user = User(
-                wallet_address=notification.creator,
-                email=f"{notification.creator[:8]}@external.com",
-                username=f"External{notification.creator[:8]}",
-                reputation_score=50.0
+        from database.connection import get_db
+        db_gen = get_db()
+        db = next(db_gen)
+        
+        try:
+            # Create user if not exists
+            user = db.query(User).filter(User.wallet_address == notification.creator).first()
+            if not user:
+                user = User(
+                    wallet_address=notification.creator,
+                    email=f"{notification.creator[:8]}@external.com",
+                    username=f"External{notification.creator[:8]}",
+                    reputation_score=50.0
+                )
+                db.add(user)
+                db.commit()
+                db.refresh(user)
+            
+            # Run fraud analysis
+            nft_data = NFTData(
+                title=notification.name,
+                description=notification.description,
+                image_url=notification.image_url,
+                category="Unknown",  # External NFTs don't have category
+                price=0.0  # External NFTs don't have price set by us
             )
-            db.add(user)
+            
+            # Generate image embedding using Gemini description analysis
+            logger.info(f"Generating description-based embedding for external NFT: {notification.image_url}")
+            embedding_service = get_embedding_service()
+            image_embedding = None
+            
+            if embedding_service:
+                image_embedding = await embedding_service.get_image_embedding(notification.image_url)
+                if image_embedding:
+                    logger.info(f"Successfully generated description-based embedding for external NFT")
+                else:
+                    logger.warning("Failed to generate description-based embedding for external NFT")
+            
+            # Create NFT record
+            nft = NFT(
+                creator_wallet_address=notification.creator,
+                owner_wallet_address=notification.creator,
+                title=notification.name,
+                description=notification.description,
+                image_url=notification.image_url,
+                sui_object_id=notification.sui_object_id,  # External NFTs already have blockchain ID
+                category="External",
+                initial_price=0.0,
+                is_listed=False,  # Default to unlisted for external NFTs
+                analysis_details={
+                    "status": "pending",
+                    "created_at": datetime.now().isoformat()
+                },
+                embedding_vector=image_embedding,  # Store description-based embedding
+            )
+            
+            db.add(nft)
             db.commit()
-            db.refresh(user)
-        
-        # Run fraud analysis
-        nft_data = NFTData(
-            title=notification.name,
-            description=notification.description,
-            image_url=notification.image_url,
-            category="Unknown",  # External NFTs don't have category
-            price=0.0  # External NFTs don't have price set by us
-        )
-        
-        fraud_result = await analyze_nft_for_fraud(nft_data)
-        
-        # Generate image embedding using Gemini description analysis
-        logger.info(f"Generating description-based embedding for external NFT: {notification.image_url}")
-        embedding_service = get_embedding_service()
-        image_embedding = None
-        
-        if embedding_service:
-            image_embedding = await embedding_service.get_image_embedding(notification.image_url)
-            if image_embedding:
-                logger.info(f"Successfully generated description-based embedding for external NFT")
-            else:
-                logger.warning("Failed to generate description-based embedding for external NFT")
-        
-        # Create NFT record
-        nft = NFT(
-            owner_id=user.id,
-            wallet_address=notification.creator,
-            title=notification.name,
-            description=notification.description,
-            category="External",
-            price=0.0,
-            image_url=notification.image_url,
-            sui_object_id=notification.sui_object_id,
-            is_fraud=fraud_result.get("is_fraud", False),
-            confidence_score=fraud_result.get("confidence_score", 0.0),
-            flag_type=fraud_result.get("flag_type"),
-            reason=fraud_result.get("reason"),
-            analysis_details=fraud_result.get("analysis_details", {}),
-            embedding_vector=image_embedding,  # Store description-based embedding
-            status="minted"
-        )
-        
-        db.add(nft)
-        db.commit()
-        
-        logger.info(f"Analyzed external NFT: {notification.sui_object_id}, fraud: {fraud_result.get('is_fraud')}")
-        
+            db.refresh(nft)
+            
+            # Run fraud analysis with database update
+            await analyze_nft_for_fraud(nft_data, str(nft.id), db)
+            
+            logger.info(f"Analyzed external NFT: {notification.sui_object_id}, analysis completed")
+            
+        finally:
+            db.close()
+            
     except Exception as e:
         logger.error(f"Error analyzing external NFT: {str(e)}")
-        db.rollback()
+        if 'db' in locals():
+            db.rollback()
 
+async def analyze_external_nft(notification: NFTMintedNotification, db: Session):
+    """Legacy function - kept for backward compatibility"""
+    await analyze_external_nft_with_db_update(notification)
 
 @router.post("/search-similar")
 async def search_similar_nfts(
@@ -1033,7 +919,7 @@ async def search_similar_nfts(
             try:
                 nft = db.query(NFT).filter(NFT.id == nft_id).first()
                 if nft:
-                    user = db.query(User).filter(User.id == nft.owner_id).first()
+                    creator_user = db.query(User).filter(User.wallet_address == nft.creator_wallet_address).first()
                     
                     # Safely handle analysis_details
                     analysis_details = None
@@ -1047,24 +933,25 @@ async def search_similar_nfts(
                     similar_nfts.append({
                         "nft": NFTResponse(
                             id=str(nft.id),
+                            sui_object_id=nft.sui_object_id,
+                            creator_wallet_address=nft.creator_wallet_address,
+                            owner_wallet_address=nft.owner_wallet_address,
                             title=nft.title,
                             description=nft.description,
-                            category=nft.category,
-                            price=float(nft.price) if nft.price else 0.0,
                             image_url=nft.image_url,
-                            wallet_address=nft.wallet_address,
-                            sui_object_id=nft.sui_object_id,
-                            is_fraud=nft.is_fraud,
-                            confidence_score=float(nft.confidence_score or 0.0),
-                            status=nft.status,
+                            metadata_url=nft.metadata_url,
+                            attributes=nft.attributes,
+                            category=nft.category,
+                            initial_price=float(nft.initial_price) if nft.initial_price else None,
+                            analysis_details=analysis_details,
                             created_at=nft.created_at,
-                            analysis_details=analysis_details
+                            updated_at=nft.updated_at
                         ),
                         "similarity_score": round(similarity_score, 4),
-                        "owner": {
-                            "wallet_address": user.wallet_address if user else nft.wallet_address,
-                            "username": user.username if user else f"User{nft.wallet_address[:8]}",
-                            "reputation_score": float(user.reputation_score) if user else 50.0
+                        "creator": {
+                            "wallet_address": nft.creator_wallet_address,
+                            "username": creator_user.username if creator_user else f"User{nft.creator_wallet_address[:8]}",
+                            "reputation_score": float(creator_user.reputation_score) if creator_user else 50.0
                         }
                     })
             except Exception as e:
@@ -1080,7 +967,6 @@ async def search_similar_nfts(
     except Exception as e:
         logger.error(f"Error in similarity search: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error searching similar NFTs: {str(e)}")
-
 
 @router.get("/analyze-duplicates/{nft_id}")
 async def analyze_potential_duplicates(
@@ -1122,7 +1008,7 @@ async def analyze_potential_duplicates(
                         "nft_id": str(similar_nft.id),
                         "title": similar_nft.title,
                         "image_url": similar_nft.image_url,
-                        "owner": similar_nft.wallet_address,
+                        "creator": similar_nft.creator_wallet_address,
                         "similarity_score": round(result["similarity"], 4),
                         "created_at": similar_nft.created_at
                     })
@@ -1155,34 +1041,27 @@ async def get_nft_status(
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
-        user = db.query(User).filter(User.id == nft.owner_id).first()
+        creator_user = db.query(User).filter(User.wallet_address == nft.creator_wallet_address).first()
         
         return {
             "nft_id": str(nft.id),
             "title": nft.title,
-            "status": nft.status,
             "sui_object_id": nft.sui_object_id,
-            "is_fraud": nft.is_fraud,
-            "confidence_score": float(nft.confidence_score or 0.0),
-            "flag_type": nft.flag_type,
-            "reason": nft.reason,
+            "analysis_details": nft.analysis_details,
             "created_at": nft.created_at,
-            "owner": {
-                "wallet_address": user.wallet_address if user else nft.wallet_address,
-                "username": user.username if user else f"User{nft.wallet_address[:8]}"
+            "creator": {
+                "wallet_address": nft.creator_wallet_address,
+                "username": creator_user.username if creator_user else f"User{nft.creator_wallet_address[:8]}"
             },
             "fraud_analysis": {
-                "is_fraud": nft.is_fraud,
-                "confidence_score": float(nft.confidence_score or 0.0),
-                "flag_type": nft.flag_type,
-                "reason": nft.reason,
+                "has_analysis": bool(nft.analysis_details),
                 "has_embedding": nft.embedding_vector is not None
             },
             "next_steps": {
                 "pending": "Mint on blockchain",
                 "minted": "List for sale",
                 "listed": "Ready for purchase"
-            }.get(nft.status, "Unknown status")
+            }.get(nft.analysis_details.get("status", "unknown") if nft.analysis_details else "unknown", "Unknown status")
         }
         
     except Exception as e:
@@ -1202,7 +1081,7 @@ async def get_status_summary(db: Session = Depends(get_db)):
         embedding_counts = {}
         
         for nft in nfts:
-            status = nft.status or "unknown"
+            status = nft.analysis_details.get("status", "unknown") if nft.analysis_details else "unknown"
             status_counts[status] = status_counts.get(status, 0) + 1
             
             if nft.sui_object_id:
@@ -1230,9 +1109,8 @@ async def get_status_summary(db: Session = Depends(get_db)):
                 recent_nft = {
                     "id": str(nft.id),
                     "title": nft.title,
-                    "status": nft.status,
+                    "status": nft.analysis_details.get("status", "unknown") if nft.analysis_details else "unknown",
                     "sui_object_id": nft.sui_object_id,
-                    "is_fraud": nft.is_fraud,
                     "has_embedding": nft.embedding_vector is not None and len(nft.embedding_vector) > 0,
                     "has_analysis_details": bool(nft.analysis_details),
                     "created_at": nft.created_at.isoformat() if nft.created_at else None
@@ -1304,7 +1182,6 @@ async def get_similar_nfts(
     try:
         # Validate UUID format
         try:
-            import uuid
             uuid.UUID(nft_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid NFT ID format")
@@ -1335,12 +1212,11 @@ async def get_similar_nfts(
                 id,
                 title,
                 image_url,
-                wallet_address,
+                creator_wallet_address,
                 embedding_vector <=> :embedding as distance
             FROM nfts 
             WHERE embedding_vector IS NOT NULL 
             AND id != :current_nft_id
-            AND status = 'minted'
             ORDER BY embedding_vector <=> :embedding
             LIMIT :limit
         """)
@@ -1366,7 +1242,7 @@ async def get_similar_nfts(
                         "nft_id": str(row.id),
                         "title": row.title,
                         "image_url": row.image_url,
-                        "wallet_address": row.wallet_address,
+                        "creator_wallet_address": row.creator_wallet_address,
                         "similarity": similarity
                     }
                     similar_nfts.append(similar_nft)
@@ -1388,144 +1264,68 @@ async def get_similar_nfts(
         logger.error(f"Error getting similar NFTs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting similar NFTs: {str(e)}")
 
-# ===== Phase 3.1: Enhanced NFT Endpoints for Listing Management =====
-
-class NFTListingRequest(BaseModel):
-    """Request model for listing an NFT"""
-    price: float
-    expires_at: Optional[datetime] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-class NFTListingResponse(BaseModel):
-    """Response model for NFT listing operations"""
-    nft_id: str
-    listing_id: Optional[str] = None
-    price: float
-    status: str
-    blockchain_tx_id: Optional[str] = None
-    message: str
-
-@router.put("/{nft_id}/list", response_model=NFTListingResponse)
-async def list_nft_for_sale(
-    nft_id: str,
-    listing_data: NFTListingRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """
-    List an NFT for sale on the marketplace
-    """
-    try:
-        # Validate NFT exists and is owned by the user
-        nft = db.query(NFT).filter(NFT.id == nft_id).first()
-        if not nft:
-            raise HTTPException(status_code=404, detail="NFT not found")
-        
-        # Check if NFT is already listed
-        if nft.is_listed:
-            raise HTTPException(status_code=400, detail="NFT is already listed for sale")
-        
-        # Check if NFT is minted
-        if nft.status != "minted":
-            raise HTTPException(status_code=400, detail="NFT must be minted before listing")
-        
-        # Get user
-        user = db.query(User).filter(User.id == nft.owner_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="NFT owner not found")
-        
-        # Create listing record
-        listing = Listing(
-            nft_id=nft.id,
-            seller_id=user.id,
-            price=listing_data.price,
-            expires_at=listing_data.expires_at,
-            metadata=listing_data.metadata,
-            status="active"
-        )
-        
-        db.add(listing)
-        
-        # Update NFT listing status
-        nft.is_listed = True
-        nft.listing_price = listing_data.price
-        nft.last_listed_at = datetime.utcnow()
-        nft.listing_status = "active"
-        nft.listing_id = str(listing.id)
-        
-        db.commit()
-        db.refresh(listing)
-        
-        # Background task to sync with blockchain
-        background_tasks.add_task(sync_listing_to_blockchain, listing.id)
-        
-        return NFTListingResponse(
-            nft_id=str(nft.id),
-            listing_id=str(listing.id),
-            price=listing_data.price,
-            status="active",
-            blockchain_tx_id=None,  # Will be set after blockchain sync
-            message="NFT listed successfully"
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error listing NFT {nft_id}: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error listing NFT: {str(e)}")
-
-@router.put("/{nft_id}/unlist", response_model=NFTListingResponse)
+@router.put("/{nft_id}/unlist")
 async def unlist_nft(
     nft_id: str,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """
-    Unlist an NFT from the marketplace
+    Unlist an NFT by cancelling its active listing
     """
     try:
-        # Validate NFT exists
+        # Validate UUID format
+        try:
+            uuid.UUID(nft_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid NFT ID format")
+        
+        # Find the NFT
         nft = db.query(NFT).filter(NFT.id == nft_id).first()
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
-        # Check if NFT is listed
-        if not nft.is_listed:
-            raise HTTPException(status_code=400, detail="NFT is not currently listed")
-        
-        # Get the active listing
-        listing = db.query(Listing).filter(
-            Listing.nft_id == nft.id,
-            Listing.status == "active"
+        # Find and cancel the active listing for this NFT
+        active_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == nft_id,
+                Listing.status == "active"
+            )
         ).first()
         
-        if not listing:
-            raise HTTPException(status_code=404, detail="Active listing not found")
-        
-        # Update listing status
-        listing.status = "inactive"
-        listing.updated_at = datetime.utcnow()
-        
-        # Update NFT listing status
-        nft.is_listed = False
-        nft.listing_status = "inactive"
-        nft.listing_price = None
-        nft.last_listed_at = None
-        
-        db.commit()
-        
-        # Background task to sync with blockchain
-        background_tasks.add_task(sync_listing_deletion_to_blockchain, listing.id)
-        
-        return NFTListingResponse(
-            nft_id=str(nft.id),
-            listing_id=str(listing.id),
-            price=float(listing.price),
-            status="inactive",
-            blockchain_tx_id=listing.blockchain_tx_id,
-            message="NFT unlisted successfully"
-        )
+        if active_listing:
+            # Cancel the listing
+            active_listing.status = "cancelled"
+            active_listing.updated_at = datetime.utcnow()
+            
+            # Update NFT listing status
+            nft.is_listed = False
+            
+            # Record transaction history
+            transaction = TransactionHistory(
+                nft_id=nft_id,
+                listing_id=active_listing.id,
+                seller_wallet_address=active_listing.seller_wallet_address,
+                buyer_wallet_address="",  # No buyer for unlisting
+                price=active_listing.price,
+                transaction_type="unlisting",
+                status="completed",
+                blockchain_tx_id="",  # No blockchain transaction for unlisting
+                gas_fee=0.0
+            )
+            
+            db.add(transaction)
+            db.commit()
+            
+            logger.info(f"Unlisted NFT {nft_id} - cancelled listing {active_listing.id}")
+            
+            return {
+                "success": True,
+                "message": "NFT unlisted successfully",
+                "nft_id": nft_id,
+                "listing_id": str(active_listing.id)
+            }
+        else:
+            raise HTTPException(status_code=404, detail="No active listing found for this NFT")
         
     except HTTPException:
         raise
@@ -1533,659 +1333,3 @@ async def unlist_nft(
         logger.error(f"Error unlisting NFT {nft_id}: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error unlisting NFT: {str(e)}")
-
-@router.get("/{nft_id}/listing-status", response_model=Dict[str, Any])
-async def get_nft_listing_status(
-    nft_id: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Get the current listing status of an NFT
-    """
-    try:
-        # Validate NFT exists
-        nft = db.query(NFT).filter(NFT.id == nft_id).first()
-        if not nft:
-            raise HTTPException(status_code=404, detail="NFT not found")
-        
-        # Get listing information
-        listing = db.query(Listing).filter(
-            Listing.nft_id == nft.id,
-            Listing.status == "active"
-        ).first()
-        
-        if not listing:
-            return {
-                "nft_id": str(nft.id),
-                "is_listed": False,
-                "listing_status": "not_listed",
-                "message": "NFT is not currently listed"
-            }
-        
-        return {
-            "nft_id": str(nft.id),
-            "is_listed": True,
-            "listing_id": str(listing.id),
-            "price": float(listing.price),
-            "status": listing.status,
-            "blockchain_tx_id": listing.blockchain_tx_id,
-            "created_at": listing.created_at,
-            "expires_at": listing.expires_at,
-            "metadata": listing.metadata
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting listing status for NFT {nft_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting listing status: {str(e)}")
-
-@router.get("/user/{wallet_address}/listings")
-async def get_user_listings(
-    wallet_address: str,
-    status: Optional[str] = None,
-    page: int = 1,
-    limit: int = 20,
-    db: Session = Depends(get_db)
-):
-    """
-    Get all listings for a specific user
-    """
-    try:
-        # Find user
-        user = db.query(User).filter(User.wallet_address == wallet_address).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        # Get user's listings
-        query = db.query(Listing).filter(Listing.seller_id == user.id)
-        
-        if status:
-            query = query.filter(Listing.status == status)
-        
-        offset = (page - 1) * limit
-        listings = query.order_by(Listing.created_at.desc()).offset(offset).limit(limit).all()
-        total = query.count()
-        
-        listing_list = []
-        for listing in listings:
-            nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
-            if nft:
-                listing_list.append({
-                    "listing_id": str(listing.id),
-                    "nft_id": str(listing.nft_id),
-                    "nft_title": nft.title,
-                    "nft_image_url": nft.image_url,
-                    "price": float(listing.price),
-                    "status": listing.status,
-                    "blockchain_tx_id": listing.blockchain_tx_id,
-                    "created_at": listing.created_at,
-                    "updated_at": listing.updated_at,
-                    "expires_at": listing.expires_at,
-                    "metadata": listing.metadata
-                })
-        
-        return {
-            "wallet_address": wallet_address,
-            "listings": listing_list,
-            "total": total,
-            "page": page,
-            "limit": limit,
-            "total_pages": math.ceil(total / limit) if total > 0 else 0
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting listings for user {wallet_address}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting user listings: {str(e)}")
-
-# Background task functions for blockchain sync
-async def sync_listing_to_blockchain(listing_id: str):
-    """Sync listing to blockchain"""
-    try:
-        logger.info(f"Syncing listing {listing_id} to blockchain")
-        # Implementation would call Sui client to create listing
-        # For now, just log the action
-        await asyncio.sleep(1)  # Simulate blockchain operation
-        logger.info(f"Listing {listing_id} synced to blockchain")
-    except Exception as e:
-        logger.error(f"Error syncing listing to blockchain: {e}")
-
-async def sync_listing_deletion_to_blockchain(listing_id: str):
-    """Sync listing deletion to blockchain"""
-    try:
-        logger.info(f"Syncing listing deletion {listing_id} to blockchain")
-        # Implementation would call Sui client to delete listing
-        # For now, just log the action
-        await asyncio.sleep(1)  # Simulate blockchain operation
-        logger.info(f"Listing deletion {listing_id} synced to blockchain")
-    except Exception as e:
-        logger.error(f"Error syncing listing deletion to blockchain: {e}")
-
-# ===== Phase 3.3: Enhanced NFT Endpoints with Advanced Features =====
-
-class NFTBulkListingRequest(BaseModel):
-    """Request model for bulk listing operations"""
-    nft_ids: List[str]
-    price: float
-    expires_at: Optional[datetime] = None
-    metadata: Optional[Dict[str, Any]] = None
-
-class NFTBulkListingResponse(BaseModel):
-    """Response model for bulk listing operations"""
-    successful_listings: List[Dict[str, Any]]
-    failed_listings: List[Dict[str, Any]]
-    total_processed: int
-    total_successful: int
-    total_failed: int
-
-class NFTListingUpdateRequest(BaseModel):
-    """Request model for updating NFT listing details"""
-    price: Optional[float] = None
-    expires_at: Optional[datetime] = None
-    metadata: Optional[Dict[str, Any]] = None
-    auto_relist: Optional[bool] = False
-
-class NFTListingAnalytics(BaseModel):
-    """Response model for NFT listing analytics"""
-    nft_id: str
-    total_listings: int
-    total_sales: int
-    average_price: float
-    highest_price: float
-    lowest_price: float
-    total_volume: float
-    listing_duration_avg: float
-    success_rate: float
-    last_listed_at: Optional[datetime] = None
-    current_status: str
-
-@router.post("/bulk-list", response_model=NFTBulkListingResponse)
-async def bulk_list_nfts(
-    bulk_request: NFTBulkListingRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """
-    Bulk list multiple NFTs for sale
-    This endpoint allows users to list multiple NFTs at once with the same price
-    """
-    try:
-        successful_listings = []
-        failed_listings = []
-        
-        for nft_id in bulk_request.nft_ids:
-            try:
-                # Validate NFT exists
-                nft = db.query(NFT).filter(NFT.id == nft_id).first()
-                if not nft:
-                    failed_listings.append({
-                        "nft_id": nft_id,
-                        "error": "NFT not found"
-                    })
-                    continue
-                
-                # Check if NFT is already listed
-                if nft.is_listed:
-                    failed_listings.append({
-                        "nft_id": nft_id,
-                        "error": "NFT is already listed"
-                    })
-                    continue
-                
-                # Check if NFT is minted
-                if nft.status != "minted":
-                    failed_listings.append({
-                        "nft_id": nft_id,
-                        "error": "NFT must be minted before listing"
-                    })
-                    continue
-                
-                # Get user
-                user = db.query(User).filter(User.id == nft.owner_id).first()
-                if not user:
-                    failed_listings.append({
-                        "nft_id": nft_id,
-                        "error": "NFT owner not found"
-                    })
-                    continue
-                
-                # Create listing record
-                listing = Listing(
-                    nft_id=nft.id,
-                    seller_id=user.id,
-                    price=bulk_request.price,
-                    expires_at=bulk_request.expires_at,
-                    metadata=bulk_request.metadata,
-                    status="active"
-                )
-                
-                db.add(listing)
-                
-                # Update NFT listing status
-                nft.is_listed = True
-                nft.listing_price = bulk_request.price
-                nft.last_listed_at = datetime.utcnow()
-                nft.listing_status = "active"
-                nft.listing_id = str(listing.id)
-                
-                db.commit()
-                db.refresh(listing)
-                
-                # Background task to sync with blockchain
-                background_tasks.add_task(sync_listing_to_blockchain, listing.id)
-                
-                successful_listings.append({
-                    "nft_id": nft_id,
-                    "listing_id": str(listing.id),
-                    "price": bulk_request.price,
-                    "status": "active"
-                })
-                
-            except Exception as e:
-                logger.error(f"Error listing NFT {nft_id}: {str(e)}")
-                failed_listings.append({
-                    "nft_id": nft_id,
-                    "error": str(e)
-                })
-        
-        return NFTBulkListingResponse(
-            successful_listings=successful_listings,
-            failed_listings=failed_listings,
-            total_processed=len(bulk_request.nft_ids),
-            total_successful=len(successful_listings),
-            total_failed=len(failed_listings)
-        )
-        
-    except Exception as e:
-        logger.error(f"Error in bulk listing operation: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error in bulk listing operation: {str(e)}")
-
-@router.put("/{nft_id}/update-listing", response_model=NFTListingResponse)
-async def update_nft_listing(
-    nft_id: str,
-    update_data: NFTListingUpdateRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """
-    Update an existing NFT listing with new details
-    This endpoint allows users to modify listing price, expiration, and metadata
-    """
-    try:
-        # Validate NFT exists
-        nft = db.query(NFT).filter(NFT.id == nft_id).first()
-        if not nft:
-            raise HTTPException(status_code=404, detail="NFT not found")
-        
-        # Check if NFT is listed
-        if not nft.is_listed:
-            raise HTTPException(status_code=400, detail="NFT is not currently listed")
-        
-        # Get the active listing
-        listing = db.query(Listing).filter(
-            Listing.nft_id == nft.id,
-            Listing.status == "active"
-        ).first()
-        
-        if not listing:
-            raise HTTPException(status_code=404, detail="Active listing not found")
-        
-        # Record old values for history
-        old_price = listing.price
-        old_expires_at = listing.expires_at
-        old_metadata = listing.metadata
-        
-        # Update listing
-        if update_data.price is not None:
-            listing.price = update_data.price
-            nft.listing_price = update_data.price
-        
-        if update_data.expires_at is not None:
-            listing.expires_at = update_data.expires_at
-        
-        if update_data.metadata is not None:
-            listing.metadata = update_data.metadata
-        
-        listing.updated_at = datetime.utcnow()
-        
-        # Create history record
-        history = ListingHistory(
-            listing_id=listing.id,
-            nft_id=listing.nft_id,
-            action="updated",
-            old_price=old_price,
-            new_price=listing.price,
-            seller_id=listing.seller_id,
-            blockchain_tx_id=listing.blockchain_tx_id
-        )
-        
-        db.add(history)
-        db.commit()
-        db.refresh(listing)
-        
-        # Background task to sync with blockchain
-        background_tasks.add_task(sync_listing_update_to_blockchain, listing.id)
-        
-        return NFTListingResponse(
-            nft_id=str(nft.id),
-            listing_id=str(listing.id),
-            price=float(listing.price),
-            status="active",
-            blockchain_tx_id=listing.blockchain_tx_id,
-            message="NFT listing updated successfully"
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error updating NFT listing {nft_id}: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error updating NFT listing: {str(e)}")
-
-@router.get("/{nft_id}/listing-analytics", response_model=NFTListingAnalytics)
-async def get_nft_listing_analytics(
-    nft_id: str,
-    db: Session = Depends(get_db)
-):
-    """
-    Get detailed analytics for an NFT's listing history
-    This endpoint provides insights into listing performance
-    """
-    try:
-        # Validate NFT exists
-        nft = db.query(NFT).filter(NFT.id == nft_id).first()
-        if not nft:
-            raise HTTPException(status_code=404, detail="NFT not found")
-        
-        # Get all listings for this NFT
-        listings = db.query(Listing).filter(Listing.nft_id == nft.id).all()
-        
-        if not listings:
-            return NFTListingAnalytics(
-                nft_id=nft_id,
-                total_listings=0,
-                total_sales=0,
-                average_price=0.0,
-                highest_price=0.0,
-                lowest_price=0.0,
-                total_volume=0.0,
-                listing_duration_avg=0.0,
-                success_rate=0.0,
-                last_listed_at=None,
-                current_status="never_listed"
-            )
-        
-        # Calculate analytics
-        prices = [float(listing.price) for listing in listings]
-        total_listings = len(listings)
-        total_sales = len([l for l in listings if l.status == "sold"])
-        average_price = sum(prices) / len(prices) if prices else 0.0
-        highest_price = max(prices) if prices else 0.0
-        lowest_price = min(prices) if prices else 0.0
-        total_volume = sum(prices)
-        
-        # Calculate average listing duration
-        durations = []
-        for listing in listings:
-            if listing.created_at and listing.updated_at:
-                duration = (listing.updated_at - listing.created_at).total_seconds() / 3600  # hours
-                durations.append(duration)
-        
-        listing_duration_avg = sum(durations) / len(durations) if durations else 0.0
-        
-        # Calculate success rate
-        success_rate = (total_sales / total_listings * 100) if total_listings > 0 else 0.0
-        
-        # Get last listed date
-        last_listed = max(listings, key=lambda x: x.created_at) if listings else None
-        last_listed_at = last_listed.created_at if last_listed else None
-        
-        # Get current status
-        current_listing = db.query(Listing).filter(
-            Listing.nft_id == nft.id,
-            Listing.status == "active"
-        ).first()
-        current_status = current_listing.status if current_listing else "not_listed"
-        
-        return NFTListingAnalytics(
-            nft_id=nft_id,
-            total_listings=total_listings,
-            total_sales=total_sales,
-            average_price=average_price,
-            highest_price=highest_price,
-            lowest_price=lowest_price,
-            total_volume=total_volume,
-            listing_duration_avg=listing_duration_avg,
-            success_rate=success_rate,
-            last_listed_at=last_listed_at,
-            current_status=current_status
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting listing analytics for NFT {nft_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting listing analytics: {str(e)}")
-
-@router.post("/{nft_id}/auto-relist")
-async def auto_relist_nft(
-    nft_id: str,
-    relist_data: NFTListingRequest,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db)
-):
-    """
-    Automatically relist an NFT after it expires or is unlisted
-    This endpoint provides automatic relisting functionality
-    """
-    try:
-        # Validate NFT exists
-        nft = db.query(NFT).filter(NFT.id == nft_id).first()
-        if not nft:
-            raise HTTPException(status_code=404, detail="NFT not found")
-        
-        # Check if NFT is currently listed
-        if nft.is_listed:
-            raise HTTPException(status_code=400, detail="NFT is already listed")
-        
-        # Check if NFT is minted
-        if nft.status != "minted":
-            raise HTTPException(status_code=400, detail="NFT must be minted before listing")
-        
-        # Get user
-        user = db.query(User).filter(User.id == nft.owner_id).first()
-        if not user:
-            raise HTTPException(status_code=404, detail="NFT owner not found")
-        
-        # Create new listing
-        listing = Listing(
-            nft_id=nft.id,
-            seller_id=user.id,
-            price=relist_data.price,
-            expires_at=relist_data.expires_at,
-            metadata=relist_data.metadata,
-            status="active"
-        )
-        
-        db.add(listing)
-        
-        # Update NFT listing status
-        nft.is_listed = True
-        nft.listing_price = relist_data.price
-        nft.last_listed_at = datetime.utcnow()
-        nft.listing_status = "active"
-        nft.listing_id = str(listing.id)
-        
-        db.commit()
-        db.refresh(listing)
-        
-        # Background task to sync with blockchain
-        background_tasks.add_task(sync_listing_to_blockchain, listing.id)
-        
-        return NFTListingResponse(
-            nft_id=str(nft.id),
-            listing_id=str(listing.id),
-            price=relist_data.price,
-            status="active",
-            blockchain_tx_id=None,
-            message="NFT auto-relisted successfully"
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error auto-relisting NFT {nft_id}: {str(e)}")
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Error auto-relisting NFT: {str(e)}")
-
-@router.get("/{nft_id}/listing-history")
-async def get_nft_listing_history(
-    nft_id: str,
-    limit: int = 10,
-    offset: int = 0,
-    db: Session = Depends(get_db)
-):
-    """
-    Get detailed listing history for an NFT
-    This endpoint provides a complete audit trail of listing activities
-    """
-    try:
-        # Validate NFT exists
-        nft = db.query(NFT).filter(NFT.id == nft_id).first()
-        if not nft:
-            raise HTTPException(status_code=404, detail="NFT not found")
-        
-        # Get listing history
-        history = db.query(ListingHistory).filter(
-            ListingHistory.nft_id == nft.id
-        ).order_by(ListingHistory.timestamp.desc()).offset(offset).limit(limit).all()
-        
-        history_list = []
-        for record in history:
-            try:
-                history_list.append({
-                    "id": str(record.id),
-                    "action": record.action,
-                    "old_price": float(record.old_price) if record.old_price else None,
-                    "new_price": float(record.new_price) if record.new_price else None,
-                    "seller_id": str(record.seller_id),
-                    "blockchain_tx_id": record.blockchain_tx_id,
-                    "timestamp": record.timestamp
-                })
-            except Exception as e:
-                logger.error(f"Error processing history record {record.id}: {e}")
-                continue
-        
-        return {
-            "nft_id": nft_id,
-            "nft_title": nft.title,
-            "history": history_list,
-            "total_records": len(history_list)
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting listing history for NFT {nft_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error getting listing history: {str(e)}")
-
-# ===== Phase 3.3: Enhanced Blockchain Sync Functions =====
-
-async def sync_listing_update_to_blockchain(listing_id: str):
-    """Sync listing update to blockchain"""
-    try:
-        logger.info(f"Syncing listing update {listing_id} to blockchain")
-        # Implementation would call Sui client to update listing
-        # For now, just log the action
-        await asyncio.sleep(1)  # Simulate blockchain operation
-        logger.info(f"Listing update {listing_id} synced to blockchain")
-    except Exception as e:
-        logger.error(f"Error syncing listing update to blockchain: {e}")
-
-def safe_serialize_analysis_details(analysis_details: Any) -> Dict[str, Any]:
-    """
-    Safely serialize analysis_details to ensure JSON compatibility
-    """
-    if analysis_details is None:
-        return {}
-    
-    if isinstance(analysis_details, dict):
-        # Recursively process dictionary
-        serialized = {}
-        for key, value in analysis_details.items():
-            try:
-                if isinstance(value, (dict, list)):
-                    serialized[key] = safe_serialize_analysis_details(value)
-                elif hasattr(value, '__dict__') and not isinstance(value, (str, int, float, bool)):
-                    # Convert objects with __dict__ to dictionaries, but exclude basic types
-                    try:
-                        serialized[key] = safe_serialize_analysis_details(vars(value))
-                    except (TypeError, ValueError):
-                        serialized[key] = str(value)
-                elif hasattr(value, 'isoformat'):
-                    # Convert datetime objects
-                    serialized[key] = value.isoformat()
-                elif hasattr(value, '__dataclass_fields__'):
-                    # Handle dataclasses
-                    try:
-                        serialized[key] = safe_serialize_analysis_details(vars(value))
-                    except (TypeError, ValueError):
-                        serialized[key] = str(value)
-                elif isinstance(value, (str, int, float, bool)):
-                    # Basic types can be serialized directly
-                    serialized[key] = value
-                else:
-                    # Try to serialize directly
-                    try:
-                        json.dumps(value)
-                        serialized[key] = value
-                    except (TypeError, ValueError):
-                        serialized[key] = str(value)
-            except Exception as e:
-                # If any error occurs during serialization, convert to string
-                logger.warning(f"Error serializing key '{key}': {e}")
-                serialized[key] = str(value)
-        return serialized
-    
-    elif isinstance(analysis_details, list):
-        # Recursively process list
-        serialized_list = []
-        for item in analysis_details:
-            try:
-                serialized_list.append(safe_serialize_analysis_details(item))
-            except Exception as e:
-                logger.warning(f"Error serializing list item: {e}")
-                serialized_list.append(str(item))
-        return serialized_list
-    
-    elif hasattr(analysis_details, '__dict__') and not isinstance(analysis_details, (str, int, float, bool)):
-        # Convert objects to dictionaries, but exclude basic types
-        try:
-            return safe_serialize_analysis_details(vars(analysis_details))
-        except (TypeError, ValueError):
-            return str(analysis_details)
-    
-    elif hasattr(analysis_details, '__dataclass_fields__'):
-        # Handle dataclasses specifically
-        try:
-            return safe_serialize_analysis_details(vars(analysis_details))
-        except (TypeError, ValueError):
-            return str(analysis_details)
-    
-    elif hasattr(analysis_details, 'isoformat'):
-        # Convert datetime objects
-        return analysis_details.isoformat()
-    
-    elif isinstance(analysis_details, (str, int, float, bool)):
-        # Basic types can be serialized directly
-        return analysis_details
-    
-    else:
-        # Try to serialize directly
-        try:
-            json.dumps(analysis_details)
-            return analysis_details
-        except (TypeError, ValueError):
-            return str(analysis_details)

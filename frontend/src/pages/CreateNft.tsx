@@ -161,9 +161,10 @@ export default function CreateNft() {
         title: formData.title,
         description: formData.description || '',
         category: formData.category || 'Art',
-        price: price,
+        initial_price: price,
         image_url: imageUrl,
-        wallet_address: account.address,
+        creator_wallet_address: account.address,
+        owner_wallet_address: account.address, // Initially creator is the owner
       };
 
       const createResult = await createNFT(nftData);

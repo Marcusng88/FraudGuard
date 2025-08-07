@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Shield, Eye } from 'lucide-react';
 import { Card } from '@/components/ui/card';
@@ -38,6 +38,8 @@ const threatConfig = {
 export function NftCard({ nft }: NftCardProps) {
   const navigate = useNavigate();
   const { wallet, connect } = useWallet();
+  const [imageError, setImageError] = useState(false);
+  const [imageLoading, setImageLoading] = useState(true);
   
   // Determine threat level based on fraud status and confidence
   const threatLevel = nft.is_fraud ? 'danger' : (nft.confidence_score >= 0.8 ? 'safe' : 'warning');
@@ -56,6 +58,37 @@ export function NftCard({ nft }: NftCardProps) {
   const formatConfidence = (score: number | null | undefined) => {
     if (score === null || score === undefined) return '-';
     return `${(score * 100).toFixed(1)}%`;
+  };
+
+  // Helper function to validate and get image URL
+  const getImageUrl = (): string => {
+    if (!nft.image_url || nft.image_url.trim() === '') {
+      console.warn('NFT has no image_url:', nft.id);
+      return '';
+    }
+    
+    // Check if it's a valid URL
+    try {
+      new URL(nft.image_url);
+      return nft.image_url;
+    } catch (error) {
+      console.error('Invalid image URL for NFT:', nft.id, nft.image_url);
+      return '';
+    }
+  };
+
+  // Use a better fallback image
+  const getFallbackImage = (): string => {
+    const colors = ['4F46E5', '059669', 'DC2626', 'EA580C', 'D97706', '65A30D', '2563EB', '7C3AED'];
+    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    return `data:image/svg+xml;base64,${btoa(`
+      <svg width="300" height="300" xmlns="http://www.w3.org/2000/svg">
+        <rect width="300" height="300" fill="#${randomColor}"/>
+        <text x="150" y="150" font-family="Arial" font-size="24" fill="white" text-anchor="middle" dy=".3em">
+          ${nft.title ? nft.title.substring(0, 10) : 'NFT'}
+        </text>
+      </svg>
+    `)}`;
   };
 
   const handleCardClick = () => {
@@ -77,6 +110,20 @@ export function NftCard({ nft }: NftCardProps) {
     // Navigate to NFT detail page for purchase
     navigate(`/nft/${nft.id}`);
   };
+
+  const handleImageLoad = () => {
+    setImageLoading(false);
+    setImageError(false);
+    console.log('Image loaded successfully for NFT:', nft.id, nft.image_url);
+  };
+
+  const handleImageError = () => {
+    setImageLoading(false);
+    setImageError(true);
+    console.error('Image failed to load for NFT:', nft.id, nft.image_url);
+  };
+
+  const imageUrl = getImageUrl();
 
   return (
     <Card 
@@ -101,17 +148,37 @@ export function NftCard({ nft }: NftCardProps) {
 
       {/* Image container with 3D effect */}
       <div className="relative overflow-hidden rounded-t-lg">
-        <img 
-          src={nft.image_url} 
-          alt={displayData(nft.title, 'NFT Image')}
-          className="w-full h-48 object-cover transition-transform duration-300 group-hover:scale-105"
-          style={{
-            filter: nft.is_fraud ? 'brightness(0.7) sepia(0.3) hue-rotate(320deg)' : 'none'
-          }}
-          onError={(e) => {
-            e.currentTarget.src = 'https://via.placeholder.com/400x300?text=NFT+Image';
-          }}
-        />
+        {imageLoading && (
+          <div className="w-full h-48 bg-muted animate-pulse flex items-center justify-center">
+            <div className="text-muted-foreground text-sm">Loading...</div>
+          </div>
+        )}
+        
+        {imageUrl && !imageError ? (
+          <img 
+            src={imageUrl} 
+            alt={displayData(nft.title, 'NFT Image')}
+            className={`w-full h-48 object-cover transition-transform duration-300 group-hover:scale-105 ${
+              imageLoading ? 'hidden' : ''
+            }`}
+            style={{
+              filter: nft.is_fraud ? 'brightness(0.7) sepia(0.3) hue-rotate(320deg)' : 'none'
+            }}
+            onLoad={handleImageLoad}
+            onError={handleImageError}
+          />
+        ) : (
+          <div className="w-full h-48 bg-muted flex items-center justify-center">
+            <img 
+              src={getFallbackImage()} 
+              alt={displayData(nft.title, 'NFT Fallback')}
+              className="w-full h-48 object-cover"
+              style={{
+                filter: nft.is_fraud ? 'brightness(0.7) sepia(0.3) hue-rotate(320deg)' : 'none'
+              }}
+            />
+          </div>
+        )}
         
         {/* Overlay gradient */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/50 via-transparent to-transparent" />
@@ -119,7 +186,7 @@ export function NftCard({ nft }: NftCardProps) {
         {/* Price overlay */}
         {nft.price && (
           <div className="absolute bottom-3 left-3 glass-panel p-2 rounded-lg">
-            <p className="text-sm font-bold text-primary neon-text">{nft.price} SUI</p>
+            <p className="text-sm font-bold text-foreground neon-text">{nft.price} SUI</p>
           </div>
         )}
 

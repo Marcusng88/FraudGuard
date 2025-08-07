@@ -24,29 +24,25 @@ except ImportError:
 
 try:
     # Try relative imports first (when running from backend directory)
-    from core.config import settings, validate_sui_config, validate_ai_config
+    from core.config import settings,validate_ai_config
     from agent.listener import start_fraud_detection_service, stop_fraud_detection_service
     from agent.sui_client import sui_client
     from agent.supabase_client import supabase_client
     from agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
-    from agent.listing_sync_service import start_listing_sync_service, stop_listing_sync_service
     from api.marketplace import router as marketplace_router
     from api.nft import router as nft_router
     from api.listings import router as listings_router
-    from api.kiosk import router as kiosk_router
     from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
-    from backend.core.config import settings, validate_sui_config, validate_ai_config
+    from backend.core.config import settings,validate_ai_config
     from backend.agent.listener import start_fraud_detection_service, stop_fraud_detection_service
     from backend.agent.sui_client import sui_client
     from backend.agent.supabase_client import supabase_client
     from backend.agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
-    from backend.agent.listing_sync_service import start_listing_sync_service, stop_listing_sync_service
     from backend.api.marketplace import router as marketplace_router
     from backend.api.nft import router as nft_router
     from backend.api.listings import router as listings_router
-    from backend.api.kiosk import router as kiosk_router
     from backend.database.connection import create_tables
 
 # Configure logging
@@ -99,18 +95,12 @@ async def lifespan(app):
         logger.warning("Will use fallback fraud detection")
 
     # Validate configuration
-    if not validate_sui_config():
-        logger.warning("Sui configuration incomplete - some features may not work")
 
     if not validate_ai_config():
         logger.warning("AI configuration incomplete - analysis may not be available")
 
     # Start fraud detection service in background
     fraud_detection_task = asyncio.create_task(start_fraud_detection_service())
-    
-    # Start listing synchronization service in background
-    listing_sync_task = asyncio.create_task(start_listing_sync_service())
-
     yield
 
     # Cleanup
@@ -120,8 +110,6 @@ async def lifespan(app):
     if listing_sync_task:
         listing_sync_task.cancel()
     await stop_fraud_detection_service()
-    await stop_listing_sync_service()
-
 
 # Create FastAPI app
 if FastAPI:
@@ -145,7 +133,6 @@ if FastAPI:
     app.include_router(marketplace_router)
     app.include_router(nft_router)
     app.include_router(listings_router)
-    app.include_router(kiosk_router)
     
 else:
     app = None

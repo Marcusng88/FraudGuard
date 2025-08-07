@@ -266,7 +266,7 @@ const NFTDetail = () => {
                 </div>
                 {nft.price && (
                   <div className="text-right">
-                    <div className="text-3xl font-bold text-primary">{nft.price} SUI</div>
+                    <div className="text-3xl font-bold text-foreground">{nft.price} SUI</div>
                     <div className="text-sm text-muted-foreground">Current Price</div>
                   </div>
                 )}

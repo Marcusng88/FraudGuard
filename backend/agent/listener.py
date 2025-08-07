@@ -112,6 +112,9 @@ class SuiEventListener:
             # Store analysis results in Supabase
             await self.store_analysis_result(nft_data, fraud_result)
 
+            # Update database with analysis results
+            await self.update_database_with_analysis(nft_data, fraud_result)
+
             # Cache NFT data for future reference
             await supabase_client.cache_nft_data({
                 "nft_id": nft_data.object_id,
@@ -149,6 +152,54 @@ class SuiEventListener:
 
         except Exception as e:
             logger.error(f"Error storing analysis result: {e}")
+
+    async def update_database_with_analysis(self, nft_data: NFTData, fraud_result: Dict[str, Any]):
+        """Update database with analysis results"""
+        try:
+            # Import database dependencies
+            try:
+                from database.connection import get_db
+                from models.database import NFT, User
+            except ImportError:
+                from backend.database.connection import get_db
+                from backend.models.database import NFT, User
+            
+            db_gen = get_db()
+            db = next(db_gen)
+            
+            try:
+                # Find NFT by Sui object ID
+                nft = db.query(NFT).filter(NFT.sui_object_id == nft_data.object_id).first()
+                
+                if nft:
+                    # Update NFT with analysis results
+                    nft.analysis_details = fraud_result.get("analysis_details", {})
+                    nft.analysis_details.update({
+                        "status": "completed",
+                        "analyzed_at": datetime.now().isoformat(),
+                        "is_fraud": fraud_result.get("is_fraud", False),
+                        "confidence_score": fraud_result.get("confidence_score", 0.0),
+                        "flag_type": fraud_result.get("flag_type"),
+                        "reason": fraud_result.get("reason", "Analysis completed")
+                    })
+                    
+                    # Update embedding vector if available
+                    if "image_analysis" in fraud_result.get("analysis_details", {}) and "embedding" in fraud_result["analysis_details"]["image_analysis"]:
+                        nft.embedding_vector = fraud_result["analysis_details"]["image_analysis"]["embedding"]
+                    
+                    db.commit()
+                    logger.info(f"Updated NFT {nft.id} with analysis results from listener")
+                else:
+                    logger.warning(f"NFT with Sui object ID {nft_data.object_id} not found in database")
+                    
+            except Exception as db_error:
+                logger.error(f"Error updating database with analysis results: {db_error}")
+                db.rollback()
+            finally:
+                db.close()
+                
+        except Exception as e:
+            logger.error(f"Error in database update: {e}")
 
     async def stop_listening(self):
         """Stop the event listener"""

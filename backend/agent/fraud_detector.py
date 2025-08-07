@@ -75,7 +75,7 @@ class UnifiedFraudDetector:
             if ChatGoogleGenerativeAI and settings.google_api_key:
                 try:
                     self.llm = ChatGoogleGenerativeAI(
-                        model=settings.google_model or "gemini-1.5-pro-latest",
+                        model=settings.google_model,
                         temperature=0.1,
                         google_api_key=settings.google_api_key
                     )
@@ -143,6 +143,10 @@ class UnifiedFraudDetector:
             
             # Step 1: Image Analysis with Gemini
             image_analysis = await self._analyze_image_with_gemini(nft_data)
+            logger.info(f"Image analysis keys: {list(image_analysis.keys())}")
+            logger.info(f"Embedding in image analysis: {image_analysis.get('embedding') is not None}")
+            if image_analysis.get('embedding'):
+                logger.info(f"Embedding dimension: {len(image_analysis['embedding'])}")
             
             # Step 2: Description Embedding and Similarity Search
             similarity_results = await self._check_similarity(nft_data, image_analysis)
@@ -178,7 +182,9 @@ class UnifiedFraudDetector:
                         "market_value_assessment": image_analysis.get("market_value_assessment", ""),
                         "recommendation": image_analysis.get("recommendation", ""),
                         "confidence_in_analysis": image_analysis.get("confidence_in_analysis", 0.0),
-                        "additional_notes": image_analysis.get("additional_notes", "")
+                        "additional_notes": image_analysis.get("additional_notes", ""),
+                        "embedding": image_analysis.get("embedding", []),
+                        "embedding_dimension": image_analysis.get("embedding_dimension", 0)
                     },
                     "similarity_results": similarity_results,
                     "metadata_analysis": metadata_analysis,
@@ -214,7 +220,9 @@ class UnifiedFraudDetector:
                         "market_value_assessment": "Analysis failed",
                         "recommendation": "Manual review required",
                         "confidence_in_analysis": 0.0,
-                        "additional_notes": f"Error: {str(e)}"
+                        "additional_notes": f"Error: {str(e)}",
+                        "embedding": [],
+                        "embedding_dimension": 0
                     },
                     "similarity_results": {"error": str(e)},
                     "metadata_analysis": {"error": str(e)},
@@ -367,7 +375,12 @@ class UnifiedFraudDetector:
                 }
             
             # Get database session
-            db = next(get_db())
+            try:
+                from database.connection import get_db
+            except ImportError:
+                from backend.database.connection import get_db
+            db_gen = get_db()
+            db = next(db_gen)
             
             try:
                 # Search for similar NFTs using vector similarity
@@ -378,7 +391,7 @@ class UnifiedFraudDetector:
                         id,
                         title,
                         image_url,
-                        wallet_address,
+                        creator_wallet_address,
                         embedding_vector <=> :embedding as distance
                     FROM nfts 
                     WHERE embedding_vector IS NOT NULL 
@@ -407,7 +420,7 @@ class UnifiedFraudDetector:
                             "nft_id": str(row.id),
                             "metadata": {
                                 "name": row.title,
-                                "creator": row.wallet_address,
+                                "creator": row.creator_wallet_address,
                                 "image_url": row.image_url
                             },
                             "similarity": similarity
@@ -735,7 +748,7 @@ async def initialize_fraud_detector() -> bool:
     return await unified_fraud_detector.initialize()
 
 
-async def analyze_nft_for_fraud(nft_data: NFTData) -> Dict[str, Any]:
+async def analyze_nft_for_fraud(nft_data: NFTData, nft_id: str = None, db_session = None) -> Dict[str, Any]:
     """
     Unified NFT fraud analysis using Google Gemini LLM
     
@@ -744,6 +757,11 @@ async def analyze_nft_for_fraud(nft_data: NFTData) -> Dict[str, Any]:
     2. Description embedding and similarity search  
     3. Metadata quality analysis
     4. LLM-based final fraud decision
+    
+    Args:
+        nft_data: NFT data to analyze
+        nft_id: Optional NFT ID for database updates
+        db_session: Optional database session for updates
     
     Returns:
     {
@@ -763,6 +781,48 @@ async def analyze_nft_for_fraud(nft_data: NFTData) -> Dict[str, Any]:
 
         # Use the unified fraud detector
         result = await unified_fraud_detector.analyze_nft_for_fraud(nft_data)
+        
+        # Update database if NFT ID and session are provided
+        if nft_id and db_session:
+            try:
+                from models.database import NFT
+                nft = db_session.query(NFT).filter(NFT.id == nft_id).first()
+                if nft:
+                    # Update NFT with analysis results
+                    nft.analysis_details = result.get("analysis_details", {})
+                    nft.analysis_details.update({
+                        "status": "completed",
+                        "analyzed_at": datetime.now().isoformat(),
+                        "is_fraud": result.get("is_fraud", False),
+                        "confidence_score": result.get("confidence_score", 0.0),
+                        "flag_type": result.get("flag_type"),
+                        "reason": result.get("reason", "Analysis completed")
+                    })
+                    
+                    # Update embedding vector if available
+                    logger.info(f"Checking for embedding in result structure...")
+                    logger.info(f"Result keys: {list(result.keys())}")
+                    if "analysis_details" in result:
+                        logger.info(f"Analysis details keys: {list(result['analysis_details'].keys())}")
+                        if "image_analysis" in result["analysis_details"]:
+                            logger.info(f"Image analysis keys: {list(result['analysis_details']['image_analysis'].keys())}")
+                    
+                    if "image_analysis" in result.get("analysis_details", {}) and "embedding" in result["analysis_details"]["image_analysis"]:
+                        embedding = result["analysis_details"]["image_analysis"]["embedding"]
+                        logger.info(f"Found embedding for NFT {nft_id}, dimension: {len(embedding) if embedding else 0}")
+                        nft.embedding_vector = embedding
+                    else:
+                        logger.warning(f"No embedding found in analysis results for NFT {nft_id}")
+                        logger.warning(f"Available keys in image_analysis: {list(result.get('analysis_details', {}).get('image_analysis', {}).keys())}")
+                    
+                    db_session.commit()
+                    logger.info(f"Updated NFT {nft_id} with analysis results")
+                else:
+                    logger.warning(f"NFT {nft_id} not found for database update")
+            except Exception as db_error:
+                logger.error(f"Error updating NFT {nft_id} in database: {db_error}")
+                if db_session:
+                    db_session.rollback()
         
         logger.info(f"Unified fraud analysis complete: is_fraud={result['is_fraud']}, confidence={result['confidence_score']:.2f}")
         return result
@@ -828,7 +888,9 @@ async def analyze_nft_for_fraud(nft_data: NFTData) -> Dict[str, Any]:
                     "market_value_assessment": "Analysis failed",
                     "recommendation": "Manual review required",
                     "confidence_in_analysis": 0.0,
-                    "additional_notes": f"Unified analysis error: {str(e)}"
+                    "additional_notes": f"Unified analysis error: {str(e)}",
+                    "embedding": [],
+                    "embedding_dimension": 0
                 },
                 "similarity_results": {"error": str(e)},
                 "metadata_analysis": {"error": str(e)},
@@ -837,91 +899,3 @@ async def analyze_nft_for_fraud(nft_data: NFTData) -> Dict[str, Any]:
                 "error": str(e)
             }
         }
-
-
-def _fallback_fraud_analysis(nft_data: NFTData) -> Dict[str, Any]:
-    """
-    Fallback analysis when AI agent is not available
-    Basic rule-based detection for development/testing
-    """
-    logger.warning("Using fallback fraud analysis - AI agent not available")
-    
-    is_fraud = False
-    confidence_score = 0.1
-    flag_type = None
-    reason = "Basic analysis completed - AI agent recommended for production"
-    
-    # Very basic checks
-    fraud_keywords = ['fake', 'copy', 'stolen', 'counterfeit']
-    title_desc = (nft_data.title + " " + nft_data.description).lower()
-    
-    for keyword in fraud_keywords:
-        if keyword in title_desc:
-            is_fraud = True
-            confidence_score = 0.6
-            flag_type = 1
-            reason = f"Suspicious keyword detected: '{keyword}'"
-            break
-    
-    # Price anomaly check
-    if nft_data.price < 0.001:
-        confidence_score = max(confidence_score, 0.4)
-        reason = "Suspiciously low price detected"
-    
-    return {
-        "is_fraud": is_fraud,
-        "confidence_score": confidence_score,
-        "flag_type": flag_type,
-        "reason": reason,
-        "analysis_details": {
-            "image_analysis": {
-                "description": f"Fallback analysis for {nft_data.title} - detailed image analysis not available",
-                "artistic_style": "unknown",
-                "quality_assessment": "Basic analysis only",
-                "fraud_indicators": {
-                    "low_effort_generation": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
-                    "stolen_artwork": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
-                    "ai_generated": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
-                    "template_usage": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
-                    "metadata_mismatch": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
-                    "copyright_violation": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"},
-                    "inappropriate_content": {"detected": False, "confidence": 0.1, "evidence": "Fallback analysis"}
-                },
-                "overall_fraud_score": confidence_score,
-                "risk_level": "low" if confidence_score < 0.3 else "medium" if confidence_score < 0.7 else "high",
-                "key_visual_elements": ["fallback analysis"],
-                "color_palette": ["unknown"],
-                "composition_analysis": "Fallback analysis - detailed analysis not available",
-                "uniqueness_score": 0.5,
-                "artistic_merit": "Fallback analysis",
-                "technical_quality": "Fallback analysis",
-                "market_value_assessment": "Fallback analysis",
-                "recommendation": "Manual review recommended",
-                "confidence_in_analysis": 0.1,
-                "additional_notes": "Using fallback analysis - AI agent recommended for production"
-            },
-            "similarity_results": {
-                "similar_nfts": [],
-                "max_similarity": 0.0,
-                "is_duplicate": False,
-                "similarity_count": 0
-            },
-            "metadata_analysis": {
-                "quality_score": 0.5,
-                "suspicious_indicators": fraud_keywords if is_fraud else [],
-                "metadata_risk": confidence_score,
-                "analysis": "Fallback metadata analysis"
-            },
-            "llm_decision": {
-                "is_fraud": is_fraud,
-                "confidence_score": confidence_score,
-                "flag_type": flag_type,
-                "reason": reason,
-                "recommendation": "MANUAL_REVIEW" if confidence_score > 0.3 else "ALLOW"
-            },
-            "analysis_timestamp": datetime.now().isoformat(),
-            "fallback_analysis": True,
-            "keywords_checked": fraud_keywords,
-            "price": nft_data.price
-        }
-    }

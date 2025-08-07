@@ -129,12 +129,42 @@ class GeminiImageAnalyzer:
             # Generate embeddings for the description
             if self.embeddings and structured_analysis.get("description"):
                 try:
+                    logger.info(f"Generating embedding for description: {structured_analysis['description'][:100]}...")
                     embedding = await self.embeddings.aembed_query(structured_analysis["description"])
                     structured_analysis["embedding"] = embedding
                     structured_analysis["embedding_dimension"] = len(embedding)
+                    logger.info(f"Successfully generated embedding with dimension: {len(embedding)}")
                 except Exception as embed_error:
-                    structured_analysis["embedding"] = []
-                    structured_analysis["embedding_dimension"] = 0
+                    logger.error(f"Error generating embedding: {embed_error}")
+                    logger.error(f"Embedding model status: {self.embeddings is not None}")
+                    logger.error(f"Description available: {bool(structured_analysis.get('description'))}")
+                    
+                    # Try to generate a fallback embedding using a simple method
+                    try:
+                        fallback_embedding = await self._generate_fallback_embedding(structured_analysis["description"])
+                        structured_analysis["embedding"] = fallback_embedding
+                        structured_analysis["embedding_dimension"] = len(fallback_embedding)
+                        logger.info(f"Generated fallback embedding with dimension: {len(fallback_embedding)}")
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback embedding generation also failed: {fallback_error}")
+                        structured_analysis["embedding"] = []
+                        structured_analysis["embedding_dimension"] = 0
+            else:
+                logger.warning("No embeddings model available or no description to embed")
+                logger.warning(f"Embeddings model available: {self.embeddings is not None}")
+                logger.warning(f"Description available: {bool(structured_analysis.get('description'))}")
+                
+                # Try to generate a fallback embedding even without the model
+                if structured_analysis.get("description"):
+                    try:
+                        fallback_embedding = await self._generate_fallback_embedding(structured_analysis["description"])
+                        structured_analysis["embedding"] = fallback_embedding
+                        structured_analysis["embedding_dimension"] = len(fallback_embedding)
+                        logger.info(f"Generated fallback embedding with dimension: {len(fallback_embedding)}")
+                    except Exception as fallback_error:
+                        logger.error(f"Fallback embedding generation failed: {fallback_error}")
+                        structured_analysis["embedding"] = []
+                        structured_analysis["embedding_dimension"] = 0
             
             logger.info(f"Completed Gemini analysis for image: {image_url}")
             return structured_analysis
@@ -201,90 +231,90 @@ class GeminiImageAnalyzer:
         """Create a comprehensive prompt for fraud detection analysis"""
         
         prompt = f"""
-You are an expert NFT fraud detection analyst. Analyze this NFT image and respond with ONLY a valid JSON object.
+        You are an expert NFT fraud detection analyst. Analyze this NFT image and respond with ONLY a valid JSON object.
 
-NFT Metadata:
-- Title: {nft_metadata.get('title', nft_metadata.get('name', 'Unknown'))}
-- Creator: {nft_metadata.get('creator', 'Unknown')}
-- Collection: {nft_metadata.get('collection', nft_metadata.get('category', 'Unknown'))}
-- Description: {nft_metadata.get('description', 'No description provided')}
-- Category: {nft_metadata.get('category', 'Unknown')}
+        NFT Metadata:
+        - Title: {nft_metadata.get('title', nft_metadata.get('name', 'Unknown'))}
+        - Creator: {nft_metadata.get('creator', 'Unknown')}
+        - Collection: {nft_metadata.get('collection', nft_metadata.get('category', 'Unknown'))}
+        - Description: {nft_metadata.get('description', 'No description provided')}
+        - Category: {nft_metadata.get('category', 'Unknown')}
 
-CRITICAL: Respond with ONLY valid JSON. No text before or after. No markdown formatting.
+        CRITICAL: Respond with ONLY valid JSON. No text before or after. No markdown formatting.
 
-Required JSON structure:
-{{
-    "description": "Detailed visual description of the image (200+ words). Include all visual elements, colors, composition, style, textures, lighting, perspective, text, symbols. Describe artistic technique, medium, and aesthetic quality.",
-    "artistic_style": "Art style classification (e.g., pixel art, 3D render, photography, digital art, oil painting, watercolor)",
-    "quality_assessment": "Image quality rating (1-10) with technical analysis of resolution, color depth, compression artifacts, production value",
-    "fraud_indicators": {{
-        "low_effort_generation": {{
-            "detected": false,
-            "confidence": 0.0,
-            "evidence": "Analysis of effort level, complexity, originality, artistic merit"
-        }},
-        "stolen_artwork": {{
-            "detected": false,
-            "confidence": 0.0,
-            "evidence": "Analysis of watermarks, signatures, style inconsistencies, plagiarism signs"
-        }},
-        "ai_generated": {{
-            "detected": false,
-            "confidence": 0.0,
-            "evidence": "Identification of AI generation artifacts, unnatural patterns, AI-generated characteristics"
-        }},
-        "template_usage": {{
-            "detected": false,
-            "confidence": 0.0,
-            "evidence": "Detection of generic templates, common patterns, mass-produced elements"
-        }},
-        "metadata_mismatch": {{
-            "detected": false,
-            "confidence": 0.0,
-            "evidence": "Analysis of whether image content matches claimed title, description, category"
-        }},
-        "copyright_violation": {{
-            "detected": false,
-            "confidence": 0.0,
-            "evidence": "Signs of copyrighted characters, logos, brands, protected IP"
-        }},
-        "inappropriate_content": {{
-            "detected": false,
-            "confidence": 0.0,
-            "evidence": "Detection of NSFW content, violence, hate speech, inappropriate material"
+        Required JSON structure:
+        {{
+            "description": "Detailed visual description of the image (200+ words). Include all visual elements, colors, composition, style, textures, lighting, perspective, text, symbols. Describe artistic technique, medium, and aesthetic quality.",
+            "artistic_style": "Art style classification (e.g., pixel art, 3D render, photography, digital art, oil painting, watercolor)",
+            "quality_assessment": "Image quality rating (1-10) with technical analysis of resolution, color depth, compression artifacts, production value",
+            "fraud_indicators": {{
+                "low_effort_generation": {{
+                    "detected": false,
+                    "confidence": 0.0,
+                    "evidence": "Analysis of effort level, complexity, originality, artistic merit"
+                }},
+                "stolen_artwork": {{
+                    "detected": false,
+                    "confidence": 0.0,
+                    "evidence": "Analysis of watermarks, signatures, style inconsistencies, plagiarism signs"
+                }},
+                "ai_generated": {{
+                    "detected": false,
+                    "confidence": 0.0,
+                    "evidence": "Identification of AI generation artifacts, unnatural patterns, AI-generated characteristics"
+                }},
+                "template_usage": {{
+                    "detected": false,
+                    "confidence": 0.0,
+                    "evidence": "Detection of generic templates, common patterns, mass-produced elements"
+                }},
+                "metadata_mismatch": {{
+                    "detected": false,
+                    "confidence": 0.0,
+                    "evidence": "Analysis of whether image content matches claimed title, description, category"
+                }},
+                "copyright_violation": {{
+                    "detected": false,
+                    "confidence": 0.0,
+                    "evidence": "Signs of copyrighted characters, logos, brands, protected IP"
+                }},
+                "inappropriate_content": {{
+                    "detected": false,
+                    "confidence": 0.0,
+                    "evidence": "Detection of NSFW content, violence, hate speech, inappropriate material"
+                }}
+            }},
+            "overall_fraud_score": 0.0,
+            "risk_level": "low",
+            "key_visual_elements": ["list", "of", "important", "visual", "elements"],
+            "color_palette": ["analysis", "of", "color", "scheme"],
+            "composition_analysis": "Analysis of image composition, layout, focal points, balance, visual hierarchy",
+            "uniqueness_score": 0.0,
+            "artistic_merit": "Assessment of artistic value, creativity, skill level, cultural significance",
+            "technical_quality": "Technical analysis of resolution, file quality, compression, production standards",
+            "market_value_assessment": "Estimation of fair market value based on artistic merit, rarity, market trends",
+            "recommendation": "Clear, actionable recommendation with specific next steps",
+            "confidence_in_analysis": 0.0,
+            "additional_notes": "Additional observations, concerns, or positive aspects"
         }}
-    }},
-    "overall_fraud_score": 0.0,
-    "risk_level": "low",
-    "key_visual_elements": ["list", "of", "important", "visual", "elements"],
-    "color_palette": ["analysis", "of", "color", "scheme"],
-    "composition_analysis": "Analysis of image composition, layout, focal points, balance, visual hierarchy",
-    "uniqueness_score": 0.0,
-    "artistic_merit": "Assessment of artistic value, creativity, skill level, cultural significance",
-    "technical_quality": "Technical analysis of resolution, file quality, compression, production standards",
-    "market_value_assessment": "Estimation of fair market value based on artistic merit, rarity, market trends",
-    "recommendation": "Clear, actionable recommendation with specific next steps",
-    "confidence_in_analysis": 0.0,
-    "additional_notes": "Additional observations, concerns, or positive aspects"
-}}
 
-ANALYSIS REQUIREMENTS:
-1. Examine image for fraud indicators: plagiarism, AI generation, low effort, stolen content
-2. Assess artistic quality, originality, and technical merit
-3. Check for metadata inconsistencies and copyright violations
-4. Evaluate market value and authenticity indicators
-5. Provide specific evidence for each fraud indicator
-6. Calculate overall fraud score (0.0-1.0) based on detected risks
-7. Determine risk level: low (0.0-0.3), medium (0.3-0.7), high (0.7-1.0)
-8. Give clear recommendation: ALLOW, FLAG, or BLOCK
+        ANALYSIS REQUIREMENTS:
+        1. Examine image for fraud indicators: plagiarism, AI generation, low effort, stolen content
+        2. Assess artistic quality, originality, and technical merit
+        3. Check for metadata inconsistencies and copyright violations
+        4. Evaluate market value and authenticity indicators
+        5. Provide specific evidence for each fraud indicator
+        6. Calculate overall fraud score (0.0-1.0) based on detected risks
+        7. Determine risk level: low (0.0-0.3), medium (0.3-0.7), high (0.7-1.0)
+        8. Give clear recommendation: ALLOW, FLAG, or BLOCK
 
-RESPONSE FORMAT:
-- Return ONLY the JSON object
-- Use actual numbers for scores (not strings)
-- Use true/false for boolean values (not "True"/"False")
-- Ensure JSON is valid and complete
-- No additional text or formatting
-"""
+        RESPONSE FORMAT:
+        - Return ONLY the JSON object
+        - Use actual numbers for scores (not strings)
+        - Use true/false for boolean values (not "True"/"False")
+        - Ensure JSON is valid and complete
+        - No additional text or formatting
+        """
         return prompt
     
     async def _download_image(self, image_url: str) -> Optional[str]:

@@ -17,9 +17,12 @@ export interface NFT {
   title: string;
   description?: string;
   category: string;
-  price: number;
+  initial_price?: number;
+  price?: number; // Current listing price
   image_url: string;
-  wallet_address: string;
+  wallet_address: string; // Legacy field for compatibility
+  creator_wallet_address?: string; // New backend field
+  owner_wallet_address?: string; // New backend field
   sui_object_id?: string;
   is_fraud: boolean;
   confidence_score: number;
@@ -32,8 +35,6 @@ export interface NFT {
   is_listed?: boolean;
   listing_price?: number;
   last_listed_at?: string;
-  listing_id?: string;
-  kiosk_id?: string;
   listing_status?: string;
 }
 
@@ -99,11 +100,14 @@ export interface MarketplaceStats {
 
 export interface NFTCreationRequest {
   title: string;
-  description: string;
-  category: string;
-  price: number;
+  description?: string;
+  category?: string;
+  initial_price?: number;
   image_url: string;
-  wallet_address: string;
+  creator_wallet_address: string;
+  owner_wallet_address: string;
+  metadata_url?: string;
+  attributes?: Record<string, unknown>;
 }
 
 export interface CreateNFTResponse {
@@ -126,8 +130,6 @@ export interface ConfirmMintResponse {
   nft_id: string;
   sui_object_id: string;
 }
-
-// Phase 1.1: Basic NFT Management Interfaces
 
 export interface MarketplaceResponse {
   nfts: NFT[];
@@ -264,7 +266,7 @@ export interface Listing {
   blockchain_tx_id?: string;
   created_at: string;
   updated_at?: string;
-  metadata?: Record<string, any>;
+  metadata?: Record<string, unknown>;
   nft_title?: string;
   nft_image_url?: string;
   seller_username?: string;
@@ -273,16 +275,15 @@ export interface Listing {
 export interface ListingCreateRequest {
   nft_id: string;
   price: number;
-  wallet_address: string;
   expires_at?: string;
-  metadata?: Record<string, any>;
+  listing_metadata?: Record<string, unknown>;
 }
 
 export interface ListingUpdateRequest {
   listing_id: string;
   price?: number;
   expires_at?: string;
-  metadata?: Record<string, any>;
+  listing_metadata?: Record<string, unknown>;
 }
 
 export interface ListingHistory {
@@ -333,7 +334,7 @@ export async function getUserListings(walletAddress: string): Promise<Listing[]>
   return response.json();
 }
 
-export async function getUserNFTs(walletAddress: string): Promise<NFT[]> {
+export async function getUserNFTs(walletAddress: string): Promise<{ nfts: NFT[], total: number }> {
   const response = await fetch(`${API_BASE_URL}/api/nft/user/${walletAddress}`);
   
   if (!response.ok) {
@@ -386,6 +387,19 @@ export async function deleteListing(listingId: string): Promise<{ message: strin
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to delete listing');
+  }
+  
+  return response.json();
+}
+
+export async function unlistNFT(nftId: string): Promise<{ message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/${nftId}/unlist`, {
+    method: 'PUT',
+  });
+  
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to unlist NFT');
   }
   
   return response.json();
