@@ -1,6 +1,7 @@
 import React from 'react';
 import { Shield, Eye, Zap, TrendingUp } from 'lucide-react';
 import { Card } from '@/components/ui/card';
+import { MarketplaceStats } from '@/lib/api';
 
 interface DetectionStat {
   label: string;
@@ -10,36 +11,10 @@ interface DetectionStat {
   color: 'primary' | 'success' | 'warning' | 'destructive';
 }
 
-const stats: DetectionStat[] = [
-  {
-    label: 'Total Scans',
-    value: '15,247',
-    trend: '+12%',
-    icon: Eye,
-    color: 'primary'
-  },
-  {
-    label: 'Threats Blocked',
-    value: '342',
-    trend: '+8%',
-    icon: Shield,
-    color: 'success'
-  },
-  {
-    label: 'Active Alerts',
-    value: '7',
-    trend: '-15%',
-    icon: Zap,
-    color: 'warning'
-  },
-  {
-    label: 'Success Rate',
-    value: '98.7%',
-    trend: '+0.3%',
-    icon: TrendingUp,
-    color: 'success'
-  }
-];
+interface FraudDetectionWidgetProps {
+  stats?: MarketplaceStats;
+  isLoading?: boolean;
+}
 
 const colorClasses = {
   primary: 'text-primary bg-primary/10 border-primary/30',
@@ -48,10 +23,42 @@ const colorClasses = {
   destructive: 'text-destructive bg-destructive/10 border-destructive/30'
 };
 
-export function FraudDetectionWidget() {
+export function FraudDetectionWidget({ stats, isLoading }: FraudDetectionWidgetProps) {
+  // Generate stats based on real data or fallback to defaults
+  const detectionStats: DetectionStat[] = [
+    {
+      label: 'Total NFTs',
+      value: isLoading ? '...' : stats ? stats.total_nfts.toLocaleString() : '0',
+      trend: '+12%',
+      icon: Eye,
+      color: 'primary'
+    },
+    {
+      label: 'Total Volume',
+      value: isLoading ? '...' : stats ? `${stats.total_volume.toFixed(2)} SUI` : '0 SUI',
+      trend: '+8%',
+      icon: TrendingUp,
+      color: 'success'
+    },
+    {
+      label: 'Fraud Detection Rate',
+      value: isLoading ? '...' : stats ? `${(stats.fraud_detection_rate * 100).toFixed(1)}%` : '0%',
+      trend: '+0.3%',
+      icon: Shield,
+      color: 'success'
+    },
+    {
+      label: 'Avg Price',
+      value: isLoading ? '...' : stats ? `${stats.average_price.toFixed(2)} SUI` : '0 SUI',
+      trend: '-5%',
+      icon: Zap,
+      color: 'warning'
+    }
+  ];
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      {stats.map((stat, index) => {
+      {detectionStats.map((stat, index) => {
         const Icon = stat.icon;
         const colorClass = colorClasses[stat.color];
         

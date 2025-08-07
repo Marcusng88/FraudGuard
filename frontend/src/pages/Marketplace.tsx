@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { NftCard } from '@/components/NftCard';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
@@ -6,79 +6,111 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Search, Filter, Grid3X3, List, Shield, AlertTriangle, Eye } from 'lucide-react';
-
-// Mock data for marketplace
-const mockNfts = [
-{
-    id: '1',
-    title: 'Cyber Punk',
-    image: 'https://i.pinimg.com/736x/f5/71/b6/f571b6d34fca38fdf580f788a223a9be.jpg?w=400&h=400&fit=crop',
-    price: '2.5 SUI',
-    creator: 'CyberArtist',
-    threatLevel: 'safe' as const
-  },
-  {
-    id: '2',
-    title: 'Digital Dreams',
-    image: 'https://i.pinimg.com/736x/90/56/d3/9056d37cff0fcead7492b2a4fb4b01cf.jpg?w=400&h=400&fit=crop',
-    price: '1.8 SUI',
-    creator: 'PixelMaster',
-    threatLevel: 'warning' as const
-  },
-  {
-    id: '3',
-    title: 'Neon Genesis',
-    image: 'https://i.pinimg.com/1200x/25/5e/6a/255e6a9ce78282a79d736713a65c289b.jpg?w=400&h=400&fit=crop',
-    price: '3.2 SUI',
-    creator: 'NeonCreator',
-    flagged: true,
-    threatLevel: 'danger' as const
-  },
-  {
-    id: '4',
-    title: 'Quantum Reality',
-    image: 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=400&h=400&fit=crop',
-    price: '4.1 ETH',
-    creator: 'QuantumArtist',
-    threatLevel: 'safe' as const
-  },
-  {
-    id: '5',
-    title: 'Holographic Dreams',
-    image: 'https://images.unsplash.com/photo-1633356122544-f134324a6cee?w=400&h=400&fit=crop',
-    price: '2.9 SUI',
-    creator: 'HoloCreator',
-    threatLevel: 'warning' as const
-  },
-  {
-    id: '6',
-    title: 'Neural Network',
-    image: 'https://i.pinimg.com/1200x/42/0c/09/420c09c9da916fcff732747e57d34301.jpg?w=400&h=400&fit=crop',
-    price: '5.0 SUI',
-    creator: 'NeuralArtist',
-    threatLevel: 'safe' as const
-  }
-];
-
-const filterOptions = [
-  { label: 'All', value: 'all', count: mockNfts.length },
-  { label: 'Safe', value: 'safe', count: mockNfts.filter(nft => nft.threatLevel === 'safe').length },
-  { label: 'Warning', value: 'warning', count: mockNfts.filter(nft => nft.threatLevel === 'warning').length },
-  { label: 'Flagged', value: 'danger', count: mockNfts.filter(nft => nft.threatLevel === 'danger').length }
-];
+import { Search, Filter, Grid3X3, List, Shield, AlertTriangle, Eye, Loader2, Plus, DollarSign, Clock, TrendingUp } from 'lucide-react';
+import { useMarketplaceNFTs, useMarketplaceStats } from '@/hooks/useMarketplace';
+import { useMarketplaceListings, useMarketplaceAnalytics } from '@/hooks/useListings';
+import { useWallet } from '@/hooks/useWallet';
 
 const Marketplace = () => {
+  const { wallet, connect } = useWallet();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFilter, setSelectedFilter] = useState('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [currentPage, setCurrentPage] = useState(1);
 
-  const filteredNfts = mockNfts.filter(nft => {
-    const matchesSearch = nft.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         nft.creator.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = selectedFilter === 'all' || nft.threatLevel === selectedFilter;
-    return matchesSearch && matchesFilter;
+  // Build filters for API call
+  const filters = useMemo(() => ({
+    page: currentPage,
+    limit: 20,
+  }), [currentPage]);
+
+  // Fetch marketplace data
+  const { data: marketplaceData, isLoading, error, refetch } = useMarketplaceNFTs(filters);
+  const { data: stats } = useMarketplaceStats();
+  
+  // Fetch marketplace listings
+  const { data: listingsData, isLoading: listingsLoading } = useMarketplaceListings({
+    limit: 20,
+    offset: (currentPage - 1) * 20
   });
+  
+  // Fetch marketplace analytics
+  const { data: analytics } = useMarketplaceAnalytics('24h');
+
+  // Handle search change with debouncing
+  const handleSearchChange = (value: string) => {
+    setSearchTerm(value);
+    setCurrentPage(1); // Reset to first page when searching
+  };
+
+  // Handle filter change
+  const handleFilterChange = (filter: string) => {
+    setSelectedFilter(filter);
+    setCurrentPage(1); // Reset to first page when filtering
+  };
+
+  // Filter options with real counts from NFT data
+  const filterOptions = useMemo(() => {
+    const nfts = marketplaceData?.nfts || [];
+    
+    const safeCount = nfts.filter(nft => !nft.is_fraud && nft.confidence_score >= 0.8).length;
+    const warningCount = nfts.filter(nft => !nft.is_fraud && nft.confidence_score < 0.8).length;
+    const flaggedCount = nfts.filter(nft => nft.is_fraud).length;
+    const totalCount = nfts.length;
+    
+    return [
+      { 
+        label: 'All', 
+        value: 'all', 
+        count: totalCount
+      },
+      { 
+        label: 'Safe', 
+        value: 'safe', 
+        count: safeCount
+      },
+      { 
+        label: 'Warning', 
+        value: 'warning', 
+        count: warningCount
+      },
+      { 
+        label: 'Flagged', 
+        value: 'danger', 
+        count: flaggedCount
+      }
+    ];
+  }, [marketplaceData?.nfts]);
+
+  // Filter NFTs based on current criteria
+  const filteredNFTs = useMemo(() => {
+    let nfts = marketplaceData?.nfts || [];
+    
+    // Apply search filter
+    if (searchTerm.trim()) {
+      const search = searchTerm.toLowerCase();
+      nfts = nfts.filter(nft => 
+        nft.title.toLowerCase().includes(search) ||
+        (nft.description && nft.description.toLowerCase().includes(search)) ||
+        nft.category.toLowerCase().includes(search)
+      );
+    }
+    
+    // Apply safety filter
+    if (selectedFilter !== 'all') {
+      if (selectedFilter === 'safe') {
+        nfts = nfts.filter(nft => !nft.is_fraud && nft.confidence_score >= 0.8);
+      } else if (selectedFilter === 'warning') {
+        nfts = nfts.filter(nft => !nft.is_fraud && nft.confidence_score < 0.8);
+      } else if (selectedFilter === 'danger') {
+        nfts = nfts.filter(nft => nft.is_fraud);
+      }
+    }
+    
+    return nfts;
+  }, [marketplaceData?.nfts, searchTerm, selectedFilter]);
+
+  const totalPages = marketplaceData?.total_pages || 1;
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -128,44 +160,42 @@ const Marketplace = () => {
             </div>
 
             {/* Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
-                             {[
-                 {
-                   icon: Shield,
-                   title: 'Verified NFTs',
-                   value: mockNfts.filter(nft => nft.threatLevel === 'safe').length,
-                   color: 'text-primary'
-                 },
-                 {
-                   icon: Eye,
-                   title: 'Under Review',
-                   value: mockNfts.filter(nft => nft.threatLevel === 'warning').length,
-                   color: 'text-secondary'
-                 },
-                 {
-                   icon: AlertTriangle,
-                   title: 'Flagged Items',
-                   value: mockNfts.filter(nft => nft.threatLevel === 'danger').length,
-                   color: 'text-destructive'
-                 }
-               ].map((stat, index) => {
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-12">
+              {[
+                {
+                  icon: Shield,
+                  title: 'Total NFTs',
+                  value: stats?.total_nfts || 0,
+                  color: 'text-primary'
+                },
+                {
+                  icon: Eye,
+                  title: 'Total Volume',
+                  value: `${stats?.total_volume || 0} SUI`,
+                  color: 'text-secondary'
+                },
+                {
+                  icon: AlertTriangle,
+                  title: 'Fraud Detection Rate',
+                  value: `${stats?.fraud_detection_rate || 0}%`,
+                  color: 'text-destructive'
+                },
+                {
+                  icon: TrendingUp,
+                  title: 'Active Listings',
+                  value: analytics?.total_listings || 0,
+                  color: 'text-success'
+                }
+              ].map((stat, index) => {
                 const Icon = stat.icon;
                 return (
-                  <div 
-                    key={stat.title}
-                    className="glass-panel p-6 hover-glow group"
-                    style={{ animationDelay: `${index * 200}ms` }}
-                  >
-                    <div className="flex flex-col items-center text-center space-y-4">
-                      <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg group-hover:shadow-cyber transition-all duration-300">
-                        <Icon className={`w-6 h-6 ${stat.color}`} />
-                      </div>
-                      <div className="space-y-2">
-                        <h3 className="text-2xl font-bold text-foreground">{stat.value}</h3>
-                        <p className="text-sm text-muted-foreground">{stat.title}</p>
-                      </div>
+                  <Card key={index} className="glass-panel p-6 group hover-glow">
+                    <div className="flex items-center justify-center mb-4">
+                      <Icon className={`w-8 h-8 ${stat.color}`} />
                     </div>
-                  </div>
+                    <h3 className="text-2xl font-bold text-foreground mb-2">{stat.value}</h3>
+                    <p className="text-sm text-muted-foreground">{stat.title}</p>
+                  </Card>
                 );
               })}
             </div>
@@ -173,28 +203,28 @@ const Marketplace = () => {
         </div>
       </section>
 
-      {/* Main Marketplace Content */}
-      <div className="container mx-auto px-6 space-y-8">
-        {/* Search and Filter Bar */}
-        <section className="glass-panel p-6">
-          <div className="flex flex-col lg:flex-row gap-4 items-center justify-between">
+      {/* Marketplace Content */}
+      <div className="container mx-auto px-6 pb-16">
+        {/* Search and Filters */}
+        <section className="mb-12">
+          <div className="flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
             {/* Search */}
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-primary w-4 h-4" />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
               <Input
-                placeholder="Search NFTs or creators..."
+                placeholder="Search NFTs, creators..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10 bg-card/30 border-border/50 focus:border-primary/50 focus:ring-primary/20 transition-all duration-300 hover:border-primary/30"
+                onChange={(e) => handleSearchChange(e.target.value)}
+                className="pl-10 glass-input bg-card/20 border-border/30 text-foreground placeholder:text-muted-foreground"
               />
             </div>
 
-                         {/* Filters */}
-             <div className="flex gap-2">
-               {filterOptions.map((option) => {
-                 const isActive = selectedFilter === option.value;
-                 
-                                   // Professional button styling
+            {/* Filters and View Toggle */}
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="flex gap-2">
+                {filterOptions.map((option) => {
+                  const isActive = selectedFilter === option.value;
+                  
                   const getButtonStyle = () => {
                     if (isActive) {
                       return 'bg-gradient-to-r from-primary to-secondary text-primary-foreground border border-primary/30 shadow-glow';
@@ -202,26 +232,26 @@ const Marketplace = () => {
                     
                     switch (option.value) {
                       case 'safe':
-                        return 'bg-card/20 border border-success/30 text-success hover:bg-success/5 hover:border-success/50';
+                        return 'bg-card/20 border border-success/30 text-success hover:bg-success/5 hover:border-success/50 hover:text-success';
                       case 'warning':
-                        return 'bg-card/20 border border-warning/30 text-warning hover:bg-warning/5 hover:border-warning/50';
+                        return 'bg-card/20 border border-warning/30 text-warning hover:bg-warning/5 hover:border-warning/50 hover:text-warning';
                       case 'danger':
-                        return 'bg-card/20 border border-destructive/30 text-destructive hover:bg-destructive/5 hover:border-destructive/50';
+                        return 'bg-card/20 border border-destructive/30 text-destructive hover:bg-destructive/5 hover:border-destructive/50 hover:text-destructive';
                       default:
-                        return 'bg-card/20 border border-border/30 text-foreground hover:bg-card/30';
+                        return 'bg-card/20 border border-border/30 text-foreground hover:bg-card/30 hover:text-foreground';
                     }
                   };
                  
-                 return (
-                   <Button
-                     key={option.value}
-                     variant="outline"
-                     size="sm"
-                     onClick={() => setSelectedFilter(option.value)}
-                     className={`gap-2 transition-all duration-300 ${getButtonStyle()}`}
-                   >
-                     {option.label}
-                                           <Badge 
+                  return (
+                    <Button
+                      key={option.value}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleFilterChange(option.value)}
+                      className={`gap-2 transition-all duration-300 ${getButtonStyle()}`}
+                    >
+                      {option.label}
+                      <Badge 
                         variant="outline" 
                         className={`text-xs ${
                           isActive 
@@ -235,23 +265,23 @@ const Marketplace = () => {
                             : 'bg-muted/20 border-border/30'
                         }`}
                       >
-                       {option.count}
-                     </Badge>
-                   </Button>
-                 );
-               })}
-             </div>
+                        {option.count}
+                      </Badge>
+                    </Button>
+                  );
+                })}
+              </div>
 
-                         {/* View Toggle */}
-             <div className="flex gap-2">
-                               <Button
+              {/* View Toggle */}
+              <div className="flex gap-2">
+                <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setViewMode('grid')}
                   className={`transition-all duration-300 ${
                     viewMode === 'grid' 
                       ? 'bg-gradient-to-r from-primary to-secondary text-primary-foreground border border-primary/30 shadow-glow' 
-                      : 'bg-card/20 border border-border/30 text-foreground hover:bg-card/30'
+                      : 'bg-card/20 border border-border/30 text-foreground hover:bg-card/30 hover:text-foreground'
                   }`}
                 >
                   <Grid3X3 className="w-4 h-4" />
@@ -263,44 +293,111 @@ const Marketplace = () => {
                   className={`transition-all duration-300 ${
                     viewMode === 'list' 
                       ? 'bg-gradient-to-r from-primary to-secondary text-primary-foreground border border-primary/30 shadow-glow' 
-                      : 'bg-card/20 border border-border/30 text-foreground hover:bg-card/30'
+                      : 'bg-card/20 border border-border/30 text-foreground hover:bg-card/30 hover:text-foreground'
                   }`}
                 >
-                 <List className="w-4 h-4" />
-               </Button>
-             </div>
+                  <List className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
           </div>
         </section>
+
+        {/* Loading State */}
+        {isLoading && (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <span className="ml-2 text-muted-foreground">Loading NFTs...</span>
+          </div>
+        )}
+
+        {/* Error State */}
+        {error && (
+          <div className="flex flex-col items-center justify-center py-12">
+            <AlertTriangle className="w-12 h-12 text-destructive mb-4" />
+            <p className="text-destructive mb-4">Failed to load marketplace NFTs</p>
+            <Button onClick={() => refetch()} variant="outline">
+              Try Again
+            </Button>
+          </div>
+        )}
 
         {/* NFT Grid */}
-        <section>
-          <div className="flex items-center gap-3 mb-6">
-            <h2 className="text-2xl font-bold text-foreground">Available NFTs</h2>
-            <div className="h-px bg-gradient-to-r from-primary/50 to-transparent flex-1" />
-            <Badge variant="outline" className="text-sm">
-              {filteredNfts.length} items
-            </Badge>
-          </div>
-          
-          <div className={`grid gap-6 ${
-            viewMode === 'grid' 
-              ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
-              : 'grid-cols-1'
-          }`}>
-            {filteredNfts.map((nft) => (
-              <NftCard
-                key={nft.id}
-                {...nft}
-              />
-            ))}
-          </div>
-
-          {filteredNfts.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">No NFTs found matching your criteria.</p>
+        {!isLoading && !error && (
+          <section>
+            <div className="flex items-center gap-3 mb-6">
+              <h2 className="text-2xl font-bold text-foreground">Available NFTs</h2>
+              <div className="h-px bg-gradient-to-r from-primary/50 to-transparent flex-1" />
+              <Badge variant="outline" className="text-sm">
+                {marketplaceData?.total || 0} items
+              </Badge>
             </div>
-          )}
-        </section>
+            
+            <div className={`grid gap-6 ${
+              viewMode === 'grid' 
+                ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4' 
+                : 'grid-cols-1'
+            }`}>
+              {filteredNFTs.map((nft) => (
+                <NftCard
+                  key={nft.id}
+                  nft={nft}
+                />
+              ))}
+            </div>
+
+            {filteredNFTs.length === 0 && !isLoading && (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">No NFTs found matching your criteria.</p>
+              </div>
+            )}
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex justify-center items-center gap-4 mt-12">
+                <Button
+                  variant="outline"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(currentPage - 1)}
+                  className="bg-card/20 border-border/30"
+                >
+                  Previous
+                </Button>
+                
+                <div className="flex items-center gap-2">
+                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                    const pageNum = currentPage <= 3 ? i + 1 : currentPage - 2 + i;
+                    if (pageNum > totalPages) return null;
+                    
+                    return (
+                      <Button
+                        key={pageNum}
+                        variant={currentPage === pageNum ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setCurrentPage(pageNum)}
+                        className={currentPage === pageNum 
+                          ? "bg-primary text-primary-foreground" 
+                          : "bg-card/20 border-border/30"
+                        }
+                      >
+                        {pageNum}
+                      </Button>
+                    );
+                  })}
+                </div>
+                
+                <Button
+                  variant="outline"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(currentPage + 1)}
+                  className="bg-card/20 border-border/30"
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </div>
   );

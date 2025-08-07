@@ -1,10 +1,11 @@
 import React from 'react';
 import { Shield, BarChart3, Users, Settings, Zap, Home } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { WalletConnection } from '@/components/WalletConnection';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 const navItems = [
-  { label: 'Dashboard', icon: Home, path: '/' },
+  { label: 'Dashboard', icon: Home, path: '/dashboard' },
   { label: 'Marketplace', icon: BarChart3, path: '/marketplace' },
   { label: 'Create', icon: Zap, path: '/create' },
   { label: 'Profile', icon: Users, path: '/profile' }
@@ -52,10 +53,7 @@ export function CyberNavigation() {
         </div>
 
         {/* Connect Wallet */}
-        <Button variant="glow" size="sm" className="relative overflow-hidden">
-          <span className="relative z-10">Connect Wallet</span>
-          <div className="absolute inset-0 bg-gradient-to-r from-accent/0 via-accent/20 to-accent/0 -translate-x-full group-hover:translate-x-full transition-transform duration-1000" />
-        </Button>
+        <WalletConnection />
       </div>
     </nav>
   );

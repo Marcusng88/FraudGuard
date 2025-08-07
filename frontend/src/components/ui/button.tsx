@@ -11,14 +11,14 @@ const buttonVariants = cva(
       variant: {
         default: "bg-primary text-primary-foreground hover:bg-primary/90 cyber-glow hover:shadow-glow",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90 hover:shadow-fraud",
-        outline: "border border-border/50 bg-card/30 backdrop-blur-sm hover:bg-accent/20 hover:text-accent-foreground",
-        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:shadow-[0_0_20px_hsl(var(--secondary)/0.3)]",
+        outline: "border border-border/50 bg-card/30 backdrop-blur-sm hover:bg-accent/20 hover:text-accent-foreground hover:border-accent/50",
+        secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 hover:text-secondary-foreground hover:shadow-[0_0_20px_hsl(var(--secondary)/0.3)]",
         ghost: "hover:bg-accent/20 hover:text-accent-foreground backdrop-blur-sm",
         link: "text-primary underline-offset-4 hover:underline neon-text",
         cyber: "bg-gradient-cyber text-primary-foreground hover:shadow-glow hover:scale-105 neon-text border border-primary/30",
-        glass: "bg-card/20 backdrop-blur-md border border-border/30 text-foreground hover:bg-card/40 hover:shadow-glass",
+        glass: "bg-card/20 backdrop-blur-md border border-border/30 text-foreground hover:bg-card/40 hover:text-foreground hover:shadow-glass",
         glow: "bg-accent text-accent-foreground hover:shadow-[0_0_30px_hsl(var(--accent)/0.6)] hover:scale-105 neon-text",
-        fraud: "bg-destructive/20 border border-destructive/50 text-destructive hover:bg-destructive/30 fraud-alert animate-pulse-glow",
+        fraud: "bg-destructive/20 border border-destructive/50 text-destructive hover:bg-destructive/30 hover:text-destructive fraud-alert animate-pulse-glow",
       },
       size: {
         default: "h-10 px-4 py-2",

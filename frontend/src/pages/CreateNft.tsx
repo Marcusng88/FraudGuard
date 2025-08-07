@@ -1,13 +1,20 @@
 import React, { useState, useRef } from 'react';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
+import { WalletConnection } from '@/components/WalletConnection';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
-import { Upload, Image, Shield, Zap, AlertTriangle, CheckCircle } from 'lucide-react';
+import { Upload, Image, Shield, Zap, AlertTriangle, CheckCircle, ExternalLink } from 'lucide-react';
+import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
+import { toast } from '@/hooks/use-toast';
+import { PACKAGE_ID, uploadToPinata, createIPFSUrl, notifyBackendNewNFT } from '@/lib/sui-utils';
+import { createNFT, confirmNFTMint } from '@/lib/api';
+import { useNavigate } from 'react-router-dom';
 
 interface FormData {
   title: string;
@@ -34,19 +41,58 @@ export default function CreateNft() {
     confidence: number;
     warnings: string[];
   } | null>(null);
+  const [fraudDetectionResult, setFraudDetectionResult] = useState<{
+    isFraud: boolean;
+    confidence: number;
+    reason?: string;
+    flagType?: number;
+  } | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [txDigest, setTxDigest] = useState<string | null>(null);
+  const [createdNftId, setCreatedNftId] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const account = useCurrentAccount();
+  const client = useSuiClient();
+  const { mutate: signAndExecute } = useSignAndExecuteTransaction();
+  const navigate = useNavigate();
+
+  // NFT Categories
+  const categories = [
+    'Art', 'Photography', 'Music', 'Gaming', 'Sports', 'Collectibles', 
+    '3D Art', 'Digital Art', 'Pixel Art', 'Abstract', 'Nature', 'Portrait'
+  ];
 
   const handleImageUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
+      // Validate file size (max 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        toast({
+          title: "File too large",
+          description: "Please select an image smaller than 10MB",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast({
+          title: "Invalid file type",
+          description: "Please select an image file",
+          variant: "destructive",
+        });
+        return;
+      }
+
       setFormData(prev => ({
         ...prev,
         image: file,
         preview: URL.createObjectURL(file)
       }));
       
-      // Simulate AI analysis
+      // Simulate AI analysis for now
       setTimeout(() => {
         const isSafe = Math.random() > 0.3; // 70% chance of being safe
         setAnalysisResult({
@@ -60,37 +106,414 @@ export default function CreateNft() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.image) return;
+    
+    if (!account) {
+      toast({
+        title: "Wallet not connected",
+        description: "Please connect your wallet to create NFT",
+        variant: "destructive",
+      });
+      return;
+    }
 
-    setIsUploading(true);
+    if (!formData.image || !formData.title.trim() || !formData.price.trim()) {
+      toast({
+        title: "Missing information",
+        description: "Please provide image, title, and price",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const price = parseFloat(formData.price);
+    if (isNaN(price) || price <= 0) {
+      toast({
+        title: "Invalid price",
+        description: "Please enter a valid price greater than 0",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setIsProcessing(true);
     setUploadProgress(0);
 
-    // Simulate upload progress
-    const interval = setInterval(() => {
-      setUploadProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsUploading(false);
-          return 100;
-        }
-        return prev + 10;
+    try {
+      // Step 1: Upload image to Pinata IPFS
+      toast({
+        title: "Uploading image...",
+        description: "Uploading your NFT image to IPFS via Pinata",
       });
-    }, 200);
+      
+      setUploadProgress(25);
+      const pinataResponse = await uploadToPinata(formData.image);
+      const imageUrl = createIPFSUrl(pinataResponse.IpfsHash);
+      
+      setUploadProgress(50);
 
-    // Here you would typically upload to your backend
-    // const formDataToSend = new FormData();
-    // formDataToSend.append('image', formData.image);
-    // formDataToSend.append('metadata', JSON.stringify({
-    //   title: formData.title,
-    //   description: formData.description,
-    //   price: formData.price,
-    //   category: formData.category
-    // }));
+      // Step 2: Create NFT record in database (includes AI fraud detection)
+      toast({
+        title: "Creating NFT...",
+        description: "Storing NFT metadata, running fraud analysis, and preparing for marketplace listing",
+      });
+
+      const nftData = {
+        title: formData.title,
+        description: formData.description || '',
+        category: formData.category || 'Art',
+        initial_price: price,
+        image_url: imageUrl,
+        creator_wallet_address: account.address,
+        owner_wallet_address: account.address, // Initially creator is the owner
+      };
+
+      const createResult = await createNFT(nftData);
+      setCreatedNftId(createResult.nft_id);
+      
+      // Show fraud warning but allow proceeding
+      if (createResult.fraud_analysis && createResult.fraud_analysis.is_fraud) {
+        toast({
+          title: "⚠️ Fraud Detected",
+          description: (
+            <div className="space-y-2">
+              <p>Your NFT has been flagged as potentially fraudulent, but you can still proceed.</p>
+              <p className="text-sm text-muted-foreground">
+                Reason: {createResult.fraud_analysis.reason || "Suspicious content detected"}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Confidence: {Math.round((createResult.fraud_analysis.confidence_score || 0) * 100)}%
+              </p>
+            </div>
+          ),
+          variant: "default",
+        });
+      }
+      
+      setUploadProgress(75);
+
+      // Step 3: Mint NFT on blockchain
+      toast({
+        title: "Minting NFT...",
+        description: "Creating your NFT on the Sui blockchain and listing in marketplace",
+      });
+
+      const tx = new Transaction();
+      
+      tx.moveCall({
+        target: `${PACKAGE_ID}::fraudguard_nft::mint_nft_with_id`,
+        arguments: [
+          tx.pure.vector('u8', Array.from(new TextEncoder().encode(formData.title))),
+          tx.pure.vector('u8', Array.from(new TextEncoder().encode(formData.description))),
+          tx.pure.vector('u8', Array.from(new TextEncoder().encode(imageUrl))),
+          tx.pure.address(account.address),
+        ],
+      });
+
+      setUploadProgress(85);
+
+      // Execute transaction
+      signAndExecute(
+        { transaction: tx },
+        {
+          onSuccess: async (result) => {
+            setTxDigest(result.digest);
+            setUploadProgress(95);
+
+            try {
+              // Step 4: Get transaction details for NFT object ID with retry mechanism
+              const getTransactionWithRetry = async (digest: string, maxRetries = 5, baseDelay = 1000) => {
+                for (let attempt = 0; attempt < maxRetries; attempt++) {
+                  try {
+                    console.log(`Attempt ${attempt + 1} to fetch transaction ${digest}`);
+                    const txResult = await client.getTransactionBlock({
+                      digest: digest,
+                      options: {
+                        showEvents: true,
+                        showEffects: true,
+                        showObjectChanges: true,
+                      },
+                    });
+                    console.log(`Successfully fetched transaction on attempt ${attempt + 1}`);
+                    return txResult;
+                  } catch (error: any) {
+                    console.log(`Attempt ${attempt + 1} failed:`, error.message);
+                    
+                    // If this is the last attempt, throw the error
+                    if (attempt === maxRetries - 1) {
+                      throw error;
+                    }
+                    
+                    // Calculate delay with exponential backoff (1s, 2s, 4s, 8s, 16s)
+                    const delay = baseDelay * Math.pow(2, attempt);
+                    console.log(`Waiting ${delay}ms before retry...`);
+                    
+                    // Show progress to user
+                    toast({
+                      title: "Processing transaction...",
+                      description: `Waiting for blockchain confirmation (attempt ${attempt + 1}/${maxRetries})`,
+                      variant: "default",
+                    });
+                    
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                  }
+                }
+              };
+
+              const txResult = await getTransactionWithRetry(result.digest);
+
+              // Extract NFT object ID from transaction effects
+              let suiObjectId = '';
+              console.log('Transaction result:', txResult);
+              
+              // Method 1: Look for created objects in objectChanges
+              if (txResult.objectChanges) {
+                console.log('Object changes:', txResult.objectChanges);
+                const createdObjects = txResult.objectChanges.filter(
+                  change => change.type === 'created'
+                );
+                console.log('Created objects:', createdObjects);
+                
+                // Look for FraudGuardNFT objects specifically
+                const nftObject = createdObjects.find(
+                  change => 'objectType' in change && 
+                  change.objectType && 
+                  (change.objectType.includes('fraudguard_nft::FraudGuardNFT') || 
+                   change.objectType.includes('fraudguard::fraudguard_nft::FraudGuardNFT'))
+                );
+                
+                if (nftObject && 'objectId' in nftObject) {
+                  suiObjectId = nftObject.objectId;
+                  console.log('Found NFT object ID from FraudGuardNFT:', suiObjectId);
+                } else if (createdObjects.length > 0) {
+                  // If no specific NFT object found, use the first created object
+                  const firstCreated = createdObjects[0];
+                  if ('objectId' in firstCreated) {
+                    suiObjectId = firstCreated.objectId;
+                    console.log('Using first created object as NFT ID:', suiObjectId);
+                  }
+                }
+              }
+              
+              // Method 2: Try to extract from events
+              if (!suiObjectId && txResult.events) {
+                console.log('Events:', txResult.events);
+                const nftMintedEvent = txResult.events.find(
+                  event => event.type?.includes('NFTMinted') || 
+                          event.type?.includes('fraudguard_nft') ||
+                          event.type?.includes('fraudguard::fraudguard_nft::NFTMinted')
+                );
+                if (nftMintedEvent && nftMintedEvent.parsedJson) {
+                  const parsedEvent = nftMintedEvent.parsedJson as any;
+                  console.log('Parsed event:', parsedEvent);
+                  if (parsedEvent.nft_id) {
+                    suiObjectId = parsedEvent.nft_id;
+                    console.log('Found NFT object ID from events:', suiObjectId);
+                  }
+                }
+              }
+              
+              // Method 3: Try to get from transaction effects
+              if (!suiObjectId && txResult.effects) {
+                console.log('Transaction effects:', txResult.effects);
+                if (txResult.effects.created && txResult.effects.created.length > 0) {
+                  const firstCreated = txResult.effects.created[0];
+                  suiObjectId = firstCreated.reference.objectId;
+                  console.log('Using first created object from effects as NFT ID:', suiObjectId);
+                }
+              }
+              
+              // Method 4: Look for any object with fraudguard in the type
+              if (!suiObjectId && txResult.objectChanges) {
+                const fraudguardObject = txResult.objectChanges.find(
+                  change => change.type === 'created' && 
+                  'objectType' in change && 
+                  change.objectType && 
+                  change.objectType.includes('fraudguard')
+                );
+                if (fraudguardObject && 'objectId' in fraudguardObject) {
+                  suiObjectId = fraudguardObject.objectId;
+                  console.log('Found fraudguard object ID:', suiObjectId);
+                }
+              }
+              
+              // Method 5: Last resort - use any created object
+              if (!suiObjectId && txResult.objectChanges) {
+                const anyCreatedObject = txResult.objectChanges.find(
+                  change => change.type === 'created' && 'objectId' in change
+                );
+                if (anyCreatedObject && 'objectId' in anyCreatedObject) {
+                  suiObjectId = anyCreatedObject.objectId;
+                  console.log('Using any created object as NFT ID (fallback):', suiObjectId);
+                }
+              }
+              
+              // Last resort: use the transaction digest as a reference
+              if (!suiObjectId) {
+                console.warn('Could not extract NFT object ID from transaction, using transaction digest as reference');
+                suiObjectId = result.digest; // Use transaction digest as fallback
+              }
+              
+              console.log('Final suiObjectId:', suiObjectId);
+
+              // Step 5: Confirm mint in database
+              if (suiObjectId && createResult.nft_id) {
+                try {
+                  console.log('Confirming mint with:', { nftId: createResult.nft_id, suiObjectId });
+                  await confirmNFTMint(createResult.nft_id, suiObjectId);
+                  console.log('Mint confirmed successfully');
+                  
+                  // Notify backend for additional fraud analysis
+                  await notifyBackendNewNFT({
+                    nftId: createResult.nft_id,
+                    suiObjectId: suiObjectId,
+                    name: formData.title,
+                    description: formData.description || '',
+                    imageUrl: imageUrl,
+                    creator: account.address,
+                    transactionDigest: result.digest
+                  });
+                  console.log('Backend notification sent');
+                } catch (confirmError) {
+                  console.error('Error confirming mint:', confirmError);
+                  toast({
+                    title: "Mint confirmation failed",
+                    description: "NFT was created on blockchain, but database update failed. Check the marketplace.",
+                    variant: "default",
+                  });
+                }
+              } else {
+                console.error('Missing data for confirmation:', { suiObjectId, nftId: createResult.nft_id });
+              }
+
+              setUploadProgress(100);
+
+              toast({
+                title: "NFT created successfully! 🎉",
+                description: (
+                  <div className="flex items-center gap-2">
+                    <span>Your NFT has been minted and is ready for listing in marketplace</span>
+                    <a 
+                      href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      View Transaction <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ),
+              });
+
+              // Navigate to marketplace after a short delay
+              setTimeout(() => {
+                navigate('/marketplace');
+              }, 2000);
+
+              // Reset form
+              setFormData({
+                title: '',
+                description: '',
+                price: '',
+                category: '',
+                image: null,
+                preview: null
+              });
+              setAnalysisResult(null);
+
+            } catch (confirmError) {
+              console.warn('Transaction details fetch failed:', confirmError);
+              
+              // Even if we can't get transaction details, the NFT was still minted
+              // We can use the transaction digest as a fallback suiObjectId
+              const fallbackSuiObjectId = result.digest;
+              
+              toast({
+                title: "NFT minted successfully! 🎉",
+                description: (
+                  <div className="flex items-center gap-2">
+                    <span>Your NFT has been minted and is ready for listing in marketplace</span>
+                    <a 
+                      href={`https://testnet.suivision.xyz/txblock/${result.digest}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-primary hover:underline"
+                    >
+                      View Transaction <ExternalLink className="w-3 h-3" />
+                    </a>
+                  </div>
+                ),
+                variant: "default",
+              });
+
+              // Try to confirm with fallback suiObjectId
+              if (createResult.nft_id) {
+                try {
+                  console.log('Confirming mint with fallback suiObjectId:', { nftId: createResult.nft_id, suiObjectId: fallbackSuiObjectId });
+                  await confirmNFTMint(createResult.nft_id, fallbackSuiObjectId);
+                  console.log('Mint confirmed with fallback ID');
+                  
+                  // Notify backend for additional fraud analysis
+                  await notifyBackendNewNFT({
+                    nftId: createResult.nft_id,
+                    suiObjectId: fallbackSuiObjectId,
+                    name: formData.title,
+                    description: formData.description || '',
+                    imageUrl: imageUrl,
+                    creator: account.address,
+                    transactionDigest: result.digest
+                  });
+                  console.log('Backend notification sent with fallback ID');
+                } catch (confirmError) {
+                  console.error('Error confirming mint with fallback:', confirmError);
+                  toast({
+                    title: "Database update failed",
+                    description: "NFT was created on blockchain, but database update failed. Check the marketplace.",
+                    variant: "default",
+                  });
+                }
+              }
+
+              setUploadProgress(100);
+
+              // Navigate to marketplace after a short delay
+              setTimeout(() => {
+                navigate('/marketplace');
+              }, 2000);
+
+              // Reset form
+              setFormData({
+                title: '',
+                description: '',
+                price: '',
+                category: '',
+                image: null,
+                preview: null
+              });
+              setAnalysisResult(null);
+            }
+          },
+          onError: (error) => {
+            console.error('Transaction failed:', error);
+            toast({
+              title: "Minting failed",
+              description: error.message || "Failed to mint NFT on blockchain. Please try again.",
+              variant: "destructive",
+            });
+          }
+        }
+      );
+
+    } catch (error) {
+      console.error('Error creating NFT:', error);
+      toast({
+        title: "Creation failed",
+        description: error instanceof Error ? error.message : "Failed to create NFT. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
-
-  const categories = [
-    'Digital Art', 'Photography', 'Music', 'Video', 'Collectibles', 'Gaming'
-  ];
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -124,6 +547,11 @@ export default function CreateNft() {
 
         <div className="relative z-10 container mx-auto px-6 text-center">
           <div className="max-w-4xl mx-auto space-y-8">
+            {/* Wallet Connection */}
+            <div className="flex justify-center mb-6">
+              <WalletConnection />
+            </div>
+
             {/* Main headline */}
             <div className="space-y-4">
               <h1 className="text-4xl md:text-6xl font-bold leading-tight">
@@ -135,7 +563,7 @@ export default function CreateNft() {
               </h1>
               
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-                Upload your digital artwork with AI-powered fraud protection and verification.
+                Upload your digital artwork with AI-powered fraud protection and verification on Sui blockchain.
               </p>
             </div>
 
@@ -149,13 +577,13 @@ export default function CreateNft() {
                 },
                 {
                   icon: Zap,
-                  title: 'Instant Analysis',
-                  description: 'Real-time content analysis and safety checks'
+                  title: 'Instant Minting',
+                  description: 'Fast NFT creation on Sui blockchain'
                 },
                 {
                   icon: CheckCircle,
-                  title: 'Verified Creation',
-                  description: 'Get verified status for your digital assets'
+                  title: 'IPFS Storage',
+                  description: 'Decentralized storage via Pinata'
                 }
               ].map((feature, index) => {
                 const Icon = feature.icon;
@@ -210,7 +638,7 @@ export default function CreateNft() {
                         type="button"
                         variant="cyber"
                         onClick={() => fileInputRef.current?.click()}
-                        disabled={isUploading}
+                        disabled={isProcessing}
                       >
                         <Image className="w-4 h-4" />
                         Choose File
@@ -272,18 +700,19 @@ export default function CreateNft() {
               {/* Form Fields */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div className="space-y-4">
-                  <Label htmlFor="title" className="text-foreground">Title</Label>
+                  <Label htmlFor="title" className="text-foreground">Title *</Label>
                   <Input
                     id="title"
                     value={formData.title}
                     onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
                     placeholder="Enter NFT title"
                     className="bg-card/30 border-border/50"
+                    required
                   />
                 </div>
 
                 <div className="space-y-4">
-                  <Label htmlFor="price" className="text-foreground">Price (ETH)</Label>
+                  <Label htmlFor="price" className="text-foreground">Price (SUI)</Label>
                   <Input
                     id="price"
                     type="number"
@@ -306,6 +735,7 @@ export default function CreateNft() {
                       variant={formData.category === category ? 'cyber' : 'glass'}
                       size="sm"
                       onClick={() => setFormData(prev => ({ ...prev, category }))}
+                      disabled={isProcessing}
                     >
                       {category}
                     </Button>
@@ -326,10 +756,17 @@ export default function CreateNft() {
               </div>
 
               {/* Upload Progress */}
-              {isUploading && (
+              {isProcessing && (
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
-                    <span>Uploading...</span>
+                    <span>
+                      {uploadProgress < 25 && "Preparing..."}
+                      {uploadProgress >= 25 && uploadProgress < 50 && "Uploading to IPFS..."}
+                      {uploadProgress >= 50 && uploadProgress < 75 && "Creating transaction..."}
+                      {uploadProgress >= 75 && uploadProgress < 90 && "Minting NFT..."}
+                      {uploadProgress >= 90 && uploadProgress < 100 && "Finalizing..."}
+                      {uploadProgress >= 100 && "Complete!"}
+                    </span>
                     <span>{uploadProgress}%</span>
                   </div>
                   <div className="w-full bg-muted rounded-full h-2">
@@ -341,16 +778,41 @@ export default function CreateNft() {
                 </div>
               )}
 
+              {/* Transaction Result */}
+              {txDigest && (
+                <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
+                  <div className="flex items-center gap-2 text-success">
+                    <CheckCircle className="w-5 h-5" />
+                    <span className="font-medium">NFT Created Successfully!</span>
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Transaction: {txDigest.slice(0, 20)}...
+                  </p>
+                </div>
+              )}
+
               {/* Submit Button */}
               <Button
                 type="submit"
                 variant="cyber"
                 size="lg"
-                disabled={!formData.image || isUploading}
+                disabled={!formData.image || !formData.title.trim() || isProcessing || !account}
                 className="w-full"
               >
-                {isUploading ? 'Creating NFT...' : 'Create NFT'}
+                {!account ? (
+                  'Connect Wallet to Mint'
+                ) : isProcessing ? (
+                  'Creating NFT...'
+                ) : (
+                  'Create NFT'
+                )}
               </Button>
+
+              {!account && (
+                <p className="text-sm text-muted-foreground text-center">
+                  Connect your wallet to start minting NFTs
+                </p>
+              )}
             </form>
           </div>
         </section>

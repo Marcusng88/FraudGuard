@@ -1,25 +1,23 @@
 /// NFT Module for FraudGuard Marketplace
 /// Handles NFT creation, management, and metadata
 module fraudguard::nft {
-    use sui::object::{Self, UID, ID};
-    use sui::transfer;
-    use sui::tx_context::{Self, TxContext};
+    use sui::object;
+    use sui::tx_context;
     use sui::url::{Self, Url};
     use sui::event;
     use std::string::{Self, String};
-    use std::vector;
+    use sui::transfer;
 
     // ===== Errors =====
     const ENotOwner: u64 = 0;
     const EInvalidMetadata: u64 = 1;
     const EEmptyName: u64 = 2;
-    // Remove unused error constant
 
     // ===== Structs =====
 
     /// Main NFT object that represents a digital asset
     public struct NFT has key, store {
-        id: UID,
+        id: object::UID,
         name: String,
         description: String,
         image_url: Url,
@@ -31,7 +29,7 @@ module fraudguard::nft {
 
     /// Capability object for minting NFTs (can be transferred to others)
     public struct NFTMintCap has key, store {
-        id: UID,
+        id: object::UID,
         collection_name: String,
         max_supply: u64,
         current_supply: u64,
@@ -41,7 +39,7 @@ module fraudguard::nft {
 
     /// Emitted when a new NFT is minted
     public struct NFTMinted has copy, drop {
-        nft_id: ID,
+        nft_id: object::ID,
         creator: address,
         name: String,
         image_url: String,
@@ -50,14 +48,14 @@ module fraudguard::nft {
 
     /// Emitted when NFT is transferred
     public struct NFTTransferred has copy, drop {
-        nft_id: ID,
+        nft_id: object::ID,
         from: address,
         to: address,
     }
 
     /// Emitted when NFT metadata is updated
     public struct NFTMetadataUpdated has copy, drop {
-        nft_id: ID,
+        nft_id: object::ID,
         updated_by: address,
     }
 
@@ -67,7 +65,7 @@ module fraudguard::nft {
     public entry fun create_mint_cap(
         collection_name: vector<u8>,
         max_supply: u64,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         let mint_cap = NFTMintCap {
             id: object::new(ctx),
@@ -87,10 +85,10 @@ module fraudguard::nft {
         image_url: vector<u8>,
         metadata: vector<u8>,
         recipient: address,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         // Validate inputs
-        assert!(!vector::is_empty(&name), EEmptyName);
+        assert!(!std::vector::is_empty(&name), EEmptyName);
         assert!(mint_cap.current_supply < mint_cap.max_supply, EInvalidMetadata);
 
         let nft_id = object::new(ctx);
@@ -129,10 +127,10 @@ module fraudguard::nft {
         description: vector<u8>,
         image_url: vector<u8>,
         metadata: vector<u8>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         // Validate inputs
-        assert!(!vector::is_empty(&name), EEmptyName);
+        assert!(!std::vector::is_empty(&name), EEmptyName);
 
         let nft_id = object::new(ctx);
         let nft_id_copy = object::uid_to_inner(&nft_id);
@@ -167,7 +165,7 @@ module fraudguard::nft {
     public entry fun transfer_nft(
         nft: NFT,
         recipient: address,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         let nft_id = object::id(&nft);
         let sender = tx_context::sender(ctx);
@@ -186,7 +184,7 @@ module fraudguard::nft {
     public entry fun update_metadata(
         nft: &mut NFT,
         new_metadata: vector<u8>,
-        ctx: &mut TxContext
+        ctx: &mut tx_context::TxContext
     ) {
         let sender = tx_context::sender(ctx);
         assert!(nft.creator == sender, ENotOwner);
@@ -223,7 +221,7 @@ module fraudguard::nft {
     }
 
     /// Get NFT ID
-    public fun get_nft_id(nft: &NFT): ID {
+    public fun get_nft_id(nft: &NFT): object::ID {
         object::id(nft)
     }
 
@@ -240,7 +238,7 @@ module fraudguard::nft {
     // ===== Test Functions =====
 
     #[test_only]
-    public fun test_mint_nft(ctx: &mut TxContext): NFT {
+    public fun test_mint_nft(ctx: &mut tx_context::TxContext): NFT {
         let nft_id = object::new(ctx);
         NFT {
             id: nft_id,
