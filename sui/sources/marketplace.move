@@ -98,6 +98,64 @@ module fraudguard::marketplace {
     public struct ListingCancelled has copy, drop {
         listing_id: ID,
         nft_id: ID,
+    }
+
+    // ===== Public Functions =====
+
+    /// Buy a listed NFT
+    public fun buy_nft(
+        marketplace: &mut Marketplace,
+        listing: Listing,
+        nft: FraudGuardNFT,
+        payment: Coin<SUI>,
+        ctx: &mut TxContext
+    ) {
+        // Validate listing is active
+        assert!(listing.is_active, EListingNotActive);
+        
+        // Validate marketplace is active
+        assert!(marketplace.is_active, EMarketplaceNotActive);
+        
+        // Check payment amount matches price
+        let payment_amount = coin::value(&payment);
+        assert!(payment_amount >= listing.price, EInsufficientPayment);
+        
+        // Calculate marketplace fee
+        let fee_amount = (listing.price * marketplace.fee_percentage) / 10000;
+        let seller_amount = listing.price - fee_amount;
+        
+        // Split payment into marketplace fee and seller payment
+        let marketplace_fee = coin::split(&mut payment, fee_amount, ctx);
+        
+        // Add marketplace fee to marketplace balance
+        let fee_balance = coin::into_balance(marketplace_fee);
+        balance::join(&mut marketplace.balance, fee_balance);
+        
+        // Update marketplace stats
+        marketplace.total_volume = marketplace.total_volume + listing.price;
+        marketplace.total_sales = marketplace.total_sales + 1;
+        
+        // Transfer remaining payment to seller
+        transfer::public_transfer(payment, listing.seller);
+        
+        // Transfer NFT to buyer
+        transfer::public_transfer(nft, tx_context::sender(ctx));
+        
+        // Emit purchase event
+        event::emit(NFTPurchased {
+            listing_id: object::id(&listing),
+            nft_id: listing.nft_id,
+            seller: listing.seller,
+            buyer: tx_context::sender(ctx),
+            price: listing.price,
+            marketplace_fee: fee_amount,
+            timestamp: tx_context::epoch(ctx),
+        });
+        
+        // Delete listing object as it's now fulfilled
+        let Listing { id, nft_id: _, seller: _, price: _, listed_at: _, is_active: _ } = listing;
+        object::delete(id);
+    }
         seller: address,
         timestamp: u64,
     }

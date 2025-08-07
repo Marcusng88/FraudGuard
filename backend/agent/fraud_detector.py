@@ -492,6 +492,8 @@ class UnifiedFraudDetector:
             2. Suspicious keywords indicating fraud
             3. Price anomalies
             4. Inconsistencies in naming and description
+            5. Reduce strictness for new or unverified creators
+            6. Reduce strictness when indicating fraud
             
             Respond in JSON format:
             {{
@@ -601,6 +603,12 @@ class UnifiedFraudDetector:
             # Use LLM for final decision
             decision_prompt = f"""
             You are an expert NFT fraud detection AI. Based on comprehensive analysis, determine if this NFT is fraudulent.
+            Consider the following guidelines:
+            1. Be lenient with image-based fraud indicators unless there's strong evidence
+            2. AI-generated art should not automatically be considered fraudulent
+            3. Consider artistic interpretation and stylistic choices
+            4. Focus more on exact duplicates rather than similar styles
+            5. Give benefit of doubt to new creators
             
             NFT Information:
             Name: {nft_data.title}
@@ -625,7 +633,8 @@ class UnifiedFraudDetector:
             - Suspicious Indicators: {metadata_analysis.get('suspicious_indicators', [])}
             - Metadata Risk: {metadata_analysis.get('metadata_risk', 0.0)}
             
-            Based on this comprehensive analysis, make a final fraud determination.
+            Make a balanced fraud determination, being especially careful not to over-flag based on image analysis alone.
+            Only flag as fraud if there is clear and convincing evidence, particularly for image-based concerns.
             
             Respond in JSON format:
             {{
