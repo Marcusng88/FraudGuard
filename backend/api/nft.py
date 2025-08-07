@@ -672,7 +672,8 @@ async def get_nft_details(
                 status="minted",
                 analysis_details=analysis_details,
                 created_at=nft.created_at,
-                updated_at=nft.updated_at
+                updated_at=nft.updated_at,
+                wallet_address=nft.creator_wallet_address  # Legacy compatibility
             ),
             "creator": {
                 "wallet_address": nft.creator_wallet_address,

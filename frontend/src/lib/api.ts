@@ -466,6 +466,105 @@ export async function getMarketplaceAnalytics(timePeriod: string = '24h'): Promi
   return response.json();
 }
 
+// Blockchain Transaction Interfaces
+export interface BlockchainTransactionCreate {
+  blockchain_tx_id: string;
+  listing_id: string;
+  nft_blockchain_id: string;
+  seller_wallet_address: string;
+  buyer_wallet_address: string;
+  price: number;
+  marketplace_fee: number;
+  seller_amount: number;
+  gas_fee?: number;
+  transaction_type?: string;
+}
+
+export interface BlockchainTransactionResponse {
+  blockchain_tx_id: string;
+  status: string;
+  price: number;
+  marketplace_fee: number;
+  seller_amount: number;
+  gas_fee?: number;
+  created_at: string;
+  transaction_type: string;
+}
+
+export interface TransactionHistory {
+  id: string;
+  blockchain_tx_id: string;
+  listing_id: string;
+  nft_blockchain_id: string;
+  seller_wallet_address: string;
+  buyer_wallet_address: string;
+  price: number;
+  marketplace_fee: number;
+  seller_amount: number;
+  gas_fee?: number;
+  transaction_type: string;
+  status: string;
+  created_at: string;
+}
+
+// Blockchain transaction API functions
+export async function recordBlockchainTransaction(transaction: BlockchainTransactionCreate): Promise<BlockchainTransactionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/transactions/blockchain`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(transaction),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to record blockchain transaction');
+  }
+
+  return response.json();
+}
+
+export async function getTransactionStatus(txId: string): Promise<BlockchainTransactionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/transactions/blockchain/${txId}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get transaction status');
+  }
+
+  return response.json();
+}
+
+export async function getUserTransactions(
+  walletAddress: string,
+  options: {
+    transaction_type?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<{
+  transactions: TransactionHistory[];
+  total: number;
+  limit: number;
+  offset: number;
+}> {
+  const params = new URLSearchParams();
+  
+  if (options.transaction_type) params.append('transaction_type', options.transaction_type);
+  if (options.limit) params.append('limit', options.limit.toString());
+  if (options.offset) params.append('offset', options.offset.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/transactions/user/${walletAddress}?${params.toString()}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get user transactions');
+  }
+
+  return response.json();
+}
+
 export async function searchListings(searchQuery: string, filters: {
   category?: string;
   min_price?: number;

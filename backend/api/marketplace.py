@@ -67,6 +67,14 @@ class NFTResponse(BaseModel):
     created_at: datetime
     analysis_details: Optional[Dict[str, Any]] = None
 
+class ListingResponse(BaseModel):
+    id: str
+    price: float
+    seller: str
+    status: str
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+
 class NFTDetailResponse(BaseModel):
     id: str
     title: str
@@ -79,6 +87,7 @@ class NFTDetailResponse(BaseModel):
     sui_object_id: Optional[str]
     created_at: datetime
     analysis_details: Optional[Dict[str, Any]] = None
+    listing: Optional[ListingResponse] = None
 
 class MarketplaceResponse(BaseModel):
     nfts: List[NFTResponse]
@@ -348,6 +357,14 @@ async def get_nft_details(
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
         
+        # Get active listing if exists
+        active_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == nft.id,
+                Listing.status == "active"
+            )
+        ).first()
+        
         # Safely serialize analysis_details if it exists
         analysis_details = nft.analysis_details
         if analysis_details is not None:
@@ -360,18 +377,34 @@ async def get_nft_details(
                 if not isinstance(analysis_details, dict):
                     analysis_details = {"raw_result": str(analysis_details)}
         
+        # Prepare listing response if active listing exists
+        listing_response = None
+        if active_listing:
+            listing_response = ListingResponse(
+                id=str(active_listing.id),
+                price=float(active_listing.price),
+                seller=active_listing.seller_wallet_address,
+                status=active_listing.status,
+                created_at=active_listing.created_at,
+                expires_at=active_listing.expires_at
+            )
+        
+        # Use listing price if available, otherwise use initial price
+        current_price = float(active_listing.price) if active_listing else (float(nft.initial_price) if nft.initial_price else 0.0)
+        
         return NFTDetailResponse(
             id=str(nft.id),
             title=nft.title,
             description=nft.description,
             category=nft.category,
-            price=float(nft.initial_price) if nft.initial_price else 0.0,
+            price=current_price,
             image_url=nft.image_url,
             creator_wallet_address=nft.creator_wallet_address,
             owner_wallet_address=nft.owner_wallet_address,
             sui_object_id=nft.sui_object_id,
             created_at=nft.created_at,
-            analysis_details=analysis_details
+            analysis_details=analysis_details,
+            listing=listing_response
         )
         
     except HTTPException:

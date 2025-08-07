@@ -118,9 +118,12 @@ class TransactionHistory(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     nft_id = Column(UUID(as_uuid=True), ForeignKey("nfts.id"), nullable=True)
     listing_id = Column(UUID(as_uuid=True), ForeignKey("listings.id"), nullable=True)
+    nft_blockchain_id = Column(Text, nullable=True)  # Added for blockchain NFT ID
     seller_wallet_address = Column(Text, nullable=False)
     buyer_wallet_address = Column(Text, nullable=False)
     price = Column(Numeric, nullable=False)
+    marketplace_fee = Column(Numeric, nullable=True)  # Added marketplace fee
+    seller_amount = Column(Numeric, nullable=True)  # Added seller amount after fee
     transaction_type = Column(Text, nullable=False)  # 'mint', 'purchase', 'listing', 'unlisting', 'edit_listing'
     blockchain_tx_id = Column(Text, nullable=True)
     gas_fee = Column(Numeric, nullable=True)

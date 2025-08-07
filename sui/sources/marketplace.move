@@ -98,18 +98,19 @@ module fraudguard::marketplace {
     public struct ListingCancelled has copy, drop {
         listing_id: ID,
         nft_id: ID,
+        seller: address,
+        timestamp: u64,
     }
 
     // ===== Public Functions =====
 
-    /// Buy a listed NFT
-    public fun buy_nft(
+    /// Buy a listed NFT (non-entry function for internal use)
+    public fun buy_nft_internal(
         marketplace: &mut Marketplace,
-        listing: Listing,
-        nft: FraudGuardNFT,
-        payment: Coin<SUI>,
+        listing: &mut Listing,
+        mut payment: Coin<SUI>,
         ctx: &mut TxContext
-    ) {
+    ): (Coin<SUI>, Coin<SUI>, NFTPurchased) {
         // Validate listing is active
         assert!(listing.is_active, EListingNotActive);
         
@@ -126,6 +127,11 @@ module fraudguard::marketplace {
         
         // Split payment into marketplace fee and seller payment
         let marketplace_fee = coin::split(&mut payment, fee_amount, ctx);
+        let seller_payment = if (seller_amount > 0) {
+            coin::split(&mut payment, seller_amount, ctx)
+        } else {
+            coin::zero(ctx)
+        };
         
         // Add marketplace fee to marketplace balance
         let fee_balance = coin::into_balance(marketplace_fee);
@@ -135,30 +141,25 @@ module fraudguard::marketplace {
         marketplace.total_volume = marketplace.total_volume + listing.price;
         marketplace.total_sales = marketplace.total_sales + 1;
         
-        // Transfer remaining payment to seller
-        transfer::public_transfer(payment, listing.seller);
+        // Mark listing as inactive
+        listing.is_active = false;
         
-        // Transfer NFT to buyer
-        transfer::public_transfer(nft, tx_context::sender(ctx));
-        
-        // Emit purchase event
-        event::emit(NFTPurchased {
-            listing_id: object::id(&listing),
+        // Create purchase event
+        let purchase_event = NFTPurchased {
+            listing_id: object::id(listing),
             nft_id: listing.nft_id,
             seller: listing.seller,
             buyer: tx_context::sender(ctx),
             price: listing.price,
             marketplace_fee: fee_amount,
-            timestamp: tx_context::epoch(ctx),
-        });
+            timestamp: tx_context::epoch_timestamp_ms(ctx),
+        };
         
-        // Delete listing object as it's now fulfilled
-        let Listing { id, nft_id: _, seller: _, price: _, listed_at: _, is_active: _ } = listing;
-        object::delete(id);
+        // Return seller payment, any remaining payment, and event
+        (seller_payment, payment, purchase_event)
     }
-        seller: address,
-        timestamp: u64,
-    }
+
+    // ===== Events (continued) =====
 
     /// Emitted when listing price is updated
     public struct ListingPriceUpdated has copy, drop {
@@ -288,10 +289,11 @@ module fraudguard::marketplace {
         transfer::public_transfer(nft, seller);
     }
 
-    /// Buy an NFT from a listing (Enhanced with better validation)
+    /// Buy an NFT from a listing (Enhanced with proper NFT transfer handling)
     public entry fun buy_nft(
         marketplace: &mut Marketplace,
-        listing: Listing,
+        listing: &mut Listing,
+        nft: FraudGuardNFT,
         mut payment: Coin<SUI>,
         ctx: &mut TxContext
     ) {
@@ -302,7 +304,7 @@ module fraudguard::marketplace {
         assert!(payment_amount >= listing.price, EInsufficientPayment);
 
         let buyer = tx_context::sender(ctx);
-        let listing_id = object::id(&listing);
+        let listing_id = object::id(listing);
         let timestamp = tx_context::epoch_timestamp_ms(ctx);
         
         // Calculate marketplace fee
@@ -311,7 +313,11 @@ module fraudguard::marketplace {
 
         // Split payment
         let marketplace_payment = coin::split(&mut payment, marketplace_fee, ctx);
-        let seller_payment = coin::split(&mut payment, seller_amount, ctx);
+        let seller_payment = if (seller_amount > 0) {
+            coin::split(&mut payment, seller_amount, ctx)
+        } else {
+            coin::zero(ctx)
+        };
 
         // Add marketplace fee to balance
         balance::join(&mut marketplace.balance, coin::into_balance(marketplace_payment));
@@ -319,6 +325,9 @@ module fraudguard::marketplace {
         // Update marketplace stats
         marketplace.total_volume = marketplace.total_volume + listing.price;
         marketplace.total_sales = marketplace.total_sales + 1;
+
+        // Mark listing as inactive
+        listing.is_active = false;
 
         // Emit purchase event
         event::emit(NFTPurchased {
@@ -331,6 +340,9 @@ module fraudguard::marketplace {
             timestamp,
         });
 
+        // Transfer NFT to buyer
+        transfer::public_transfer(nft, buyer);
+
         // Transfer payment to seller
         transfer::public_transfer(seller_payment, listing.seller);
         
@@ -340,10 +352,6 @@ module fraudguard::marketplace {
         } else {
             coin::destroy_zero(payment);
         };
-
-        // Destroy the listing
-        let Listing { id, nft_id: _, seller: _, price: _, listed_at: _, is_active: _ } = listing;
-        object::delete(id);
     }
 
     /// Cancel a listing (Enhanced with events)

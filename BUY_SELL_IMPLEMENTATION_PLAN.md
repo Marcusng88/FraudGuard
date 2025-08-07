@@ -16,78 +16,67 @@
 
 ## Implementation Plan
 
-### Phase 1: Database Schema Enhancements
-
-#### 1.1 Add Blockchain Fields to Transaction History
-
-**transaction_history table enhancements:**
-```sql
--- Add blockchain-specific fields for buy/sell transactions
-ALTER TABLE transaction_history ADD COLUMN marketplace_fee NUMERIC;
-ALTER TABLE transaction_history ADD COLUMN seller_amount NUMERIC;
-ALTER TABLE transaction_history ADD COLUMN listing_blockchain_id TEXT;
-ALTER TABLE transaction_history ADD COLUMN nft_blockchain_id TEXT;
-ALTER TABLE transaction_history ADD COLUMN gas_fee NUMERIC;
-ALTER TABLE transaction_history ADD COLUMN blockchain_status TEXT DEFAULT 'pending';
-```
-
-#### 1.2 Create New Tables for Enhanced Tracking
-
-**blockchain_events table:**
-```sql
-CREATE TABLE blockchain_events (
-    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
-    event_type TEXT NOT NULL,
-    blockchain_tx_id TEXT,
-    event_data JSONB,
-    processed_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-);
-```
-
-**marketplace_config table:**
-```sql
-CREATE TABLE marketplace_config (
-    id UUID PRIMARY KEY DEFAULT extensions.uuid_generate_v4(),
-    fee_percentage NUMERIC DEFAULT 2.5,
-    marketplace_address TEXT,
-    is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
-);
-```
 
 ### Phase 2: Buy/Sell Blockchain Integration Flow
 
-#### 2.1 Buy Flow (Purchasing NFT)
+#### 2.1 Buy Flow (Purchasing NFT) - ✅ COMPLETED
 
 **Frontend → Blockchain → Backend Flow:**
 
-1. **Frontend (User initiates buy):**
-   - User selects listing to purchase
-   - Frontend validates user has sufficient balance
-   - Frontend calls `buy_nft` Move function with listing data
+1. **Frontend (User initiates buy):** ✅ IMPLEMENTED
+   - User selects listing to purchase from marketplace
+   - Frontend validates user has sufficient balance using `validateSufficientBalance()`
+   - Frontend calculates total cost including marketplace fee
+   - User clicks "Buy Now" button on NFT card
+   - System checks for wallet connection and prompts connection if needed
+   - Prevents purchase of flagged NFTs
 
-2. **Blockchain (Sui Move execution):**
-   - Validates listing is active
+2. **Blockchain (Sui Move execution):** ✅ IMPLEMENTED
+   - Frontend calls `executeBuyTransaction()` which wraps the Move contract
+   - Validates listing is active in Move contract
    - Transfers SUI from buyer to seller
    - Transfers NFT from seller to buyer
-   - Calculates and collects marketplace fee
-   - Emits `NFTPurchased` event
-   - Destroys listing object
+   - Calculates and collects marketplace fee (2.5% default)
+   - Emits `NFTPurchased` event with transaction details
+   - Marks listing as inactive (not destroyed, just deactivated)
 
-3. **Frontend receives blockchain response:**
-   - Gets transaction ID and purchase details
-   - Calls backend API with blockchain metadata
+3. **Frontend receives blockchain response:** ✅ IMPLEMENTED
+   - Gets transaction ID and purchase details from blockchain
+   - Extracts purchase event data using `extractPurchaseEventData()`
+   - Calls backend API with blockchain metadata using `recordBlockchainTransaction()`
+   - Shows success/error toast notifications
+   - Redirects user to profile page after successful purchase
 
-4. **Backend (Database update):**
-   - Records transaction in database
-   - Updates NFT ownership
-   - Marks listing as sold
-   - Updates user reputation scores
+4. **Backend (Database update):** ✅ IMPLEMENTED
+   - Records transaction in `transaction_history` table
+   - Updates NFT ownership in `nfts` table
+   - Marks listing as sold in `listings` table
+   - Updates user reputation scores and transaction counts
+   - Validates listing exists and is active before recording
+   - Returns transaction confirmation to frontend
 
-**API Endpoints needed:**
-- `POST /api/transactions/blockchain` - Record blockchain purchase
+**Key Features Implemented:**
+- ✅ Balance validation before purchase
+- ✅ Marketplace fee calculation and collection
+- ✅ Real-time transaction status updates
+- ✅ Fraud prevention (blocks flagged NFT purchases)
+- ✅ Gas fee estimation and handling
+- ✅ Transaction confirmation waiting
+- ✅ Error handling and user feedback
+- ✅ Database consistency maintenance
+
+**API Endpoints implemented:**
+- ✅ `POST /api/transactions/blockchain` - Record blockchain purchase
+- ✅ `GET /api/transactions/blockchain/{tx_id}` - Get transaction status
+- ✅ `GET /api/transactions/user/{wallet_address}` - Get user transaction history
+
+**Technical Implementation Details:**
+- **Blockchain Utils**: Created `/lib/blockchain-utils.ts` with transaction handling
+- **Wallet Integration**: Enhanced `useWallet` hook with buy/sell capabilities  
+- **UI Components**: Updated `NftCard` component with integrated buy functionality
+- **Move Contract**: Enhanced `marketplace.move` with proper buy function
+- **Type Safety**: Full TypeScript support for all transaction operations
+- **Error Handling**: Comprehensive error handling at all levels
 - `GET /api/transactions/blockchain/{tx_id}` - Get transaction status
 
 #### 2.2 Sell Flow (Selling NFT)

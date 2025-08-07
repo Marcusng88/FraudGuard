@@ -1,6 +1,17 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { useCurrentWallet, useCurrentAccount, useConnectWallet, useDisconnectWallet } from '@mysten/dapp-kit';
+import { useCurrentWallet, useCurrentAccount, useConnectWallet, useDisconnectWallet, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
+import { Transaction } from '@mysten/sui/transactions';
+import { 
+  executeBuyTransaction, 
+  executeSellTransaction, 
+  validateSufficientBalance,
+  BuyNFTParams,
+  SellNFTParams,
+  TransactionResult,
+  calculateMarketplaceFee,
+  calculateSellerAmount
+} from '@/lib/blockchain-utils';
 
 interface Wallet {
   address: string;
@@ -13,6 +24,12 @@ interface WalletContextType {
   connect: () => Promise<void>;
   disconnect: () => void;
   isLoading: boolean;
+  // Blockchain transaction methods
+  executeBuyTransaction: (params: BuyNFTParams) => Promise<TransactionResult>;
+  executeSellTransaction: (params: SellNFTParams) => Promise<TransactionResult>;
+  validateSufficientBalance: (amount: number) => Promise<{ sufficient: boolean; currentBalance: number; required: number }>;
+  calculateMarketplaceFee: (price: number) => number;
+  calculateSellerAmount: (price: number) => number;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -32,6 +49,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }): Rea
   const currentAccount = useCurrentAccount();
   const connectWallet = useConnectWallet();
   const disconnectWallet = useDisconnectWallet();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
 
   // Create user in backend when wallet connects
   const createUserInBackend = async (walletAddress: string) => {
@@ -126,6 +144,49 @@ export function WalletProvider({ children }: { children: React.ReactNode }): Rea
     }
   };
 
+  // Blockchain transaction methods
+  const handleBuyTransaction = async (params: BuyNFTParams): Promise<TransactionResult> => {
+    if (!wallet?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    const wrappedSignAndExecute = async (transaction: Transaction) => {
+      const result = await signAndExecuteTransaction({ transaction });
+      // Return a properly typed result
+      return {
+        digest: result.digest,
+        effects: result.effects,
+      } as { digest: string; effects?: { status?: { status: string; error?: string }; gasUsed?: { computationCost: number } } };
+    };
+
+    return executeBuyTransaction(params, wrappedSignAndExecute);
+  };
+
+  const handleSellTransaction = async (params: SellNFTParams): Promise<TransactionResult> => {
+    if (!wallet?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    const wrappedSignAndExecute = async (transaction: Transaction) => {
+      const result = await signAndExecuteTransaction({ transaction });
+      // Return a properly typed result
+      return {
+        digest: result.digest,
+        effects: result.effects,
+      } as { digest: string; effects?: { status?: { status: string; error?: string }; gasUsed?: { computationCost: number } } };
+    };
+
+    return executeSellTransaction(params, wrappedSignAndExecute);
+  };
+
+  const handleValidateSufficientBalance = async (amount: number) => {
+    if (!wallet?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    return validateSufficientBalance(wallet.address, amount);
+  };
+
   // Check for existing wallet connection on mount
   useEffect(() => {
     const savedWallet = localStorage.getItem('wallet');
@@ -148,7 +209,13 @@ export function WalletProvider({ children }: { children: React.ReactNode }): Rea
       wallet, 
       connect, 
       disconnect, 
-      isLoading: isLoading || connectWallet.isPending || disconnectWallet.isPending 
+      isLoading: isLoading || connectWallet.isPending || disconnectWallet.isPending,
+      // Blockchain methods
+      executeBuyTransaction: handleBuyTransaction,
+      executeSellTransaction: handleSellTransaction,
+      validateSufficientBalance: handleValidateSufficientBalance,
+      calculateMarketplaceFee,
+      calculateSellerAmount,
     }}>
       {children}
     </WalletContext.Provider>

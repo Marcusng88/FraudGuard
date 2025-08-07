@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { AlertTriangle, Shield, Eye } from 'lucide-react';
+import { AlertTriangle, Shield, Eye, Loader2, DollarSign } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 import { NFT } from '@/lib/api';
 import { useWallet } from '@/hooks/useWallet';
+import { recordBlockchainTransaction } from '@/lib/api';
+import { extractPurchaseEventData, getTransactionDetails, MARKETPLACE_OBJECT_ID } from '@/lib/blockchain-utils';
 
 interface NftCardProps {
   nft: NFT;
@@ -37,9 +40,11 @@ const threatConfig = {
 
 export function NftCard({ nft }: NftCardProps) {
   const navigate = useNavigate();
-  const { wallet, connect } = useWallet();
+  const { wallet, connect, executeBuyTransaction, validateSufficientBalance, calculateMarketplaceFee } = useWallet();
+  const { toast } = useToast();
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
+  const [isBuying, setIsBuying] = useState(false);
   
   // Determine threat level based on fraud status and confidence
   const threatLevel = nft.is_fraud ? 'danger' : (nft.confidence_score >= 0.8 ? 'safe' : 'warning');
@@ -100,15 +105,137 @@ export function NftCard({ nft }: NftCardProps) {
     navigate(`/nft/${nft.id}`);
   };
 
-  const handlePurchase = (nft: NFT) => {
+  const handlePurchase = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    
     if (!wallet?.address) {
       // If wallet is not connected, prompt user to connect
       connect();
       return;
     }
-    
-    // Navigate to NFT detail page for purchase
-    navigate(`/nft/${nft.id}`);
+
+    if (!nft.price || nft.price <= 0) {
+      toast({
+        title: "Purchase Error",
+        description: "NFT price is not available",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (nft.is_fraud) {
+      toast({
+        title: "Purchase Blocked",
+        description: "This NFT has been flagged as potentially fraudulent",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Check if buyer is trying to buy their own NFT
+    const currentOwner = nft.owner_wallet_address || nft.wallet_address;
+    if (currentOwner === wallet.address) {
+      toast({
+        title: "Purchase Error",
+        description: "You cannot purchase your own NFT",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsBuying(true);
+
+    try {
+      // Validate sufficient balance (including marketplace fee)
+      const totalCost = nft.price + calculateMarketplaceFee(nft.price);
+      console.log(`Total cost: ${totalCost} SUI (Price: ${nft.price} + Fee: ${calculateMarketplaceFee(nft.price)})`);
+      
+      const balanceCheck = await validateSufficientBalance(totalCost);
+      console.log('Balance check result:', balanceCheck);
+      
+      if (!balanceCheck.sufficient) {
+        toast({
+          title: "Insufficient Balance",
+          description: `You need ${totalCost.toFixed(4)} SUI but only have ${balanceCheck.currentBalance.toFixed(4)} SUI`,
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Get the seller address (current owner of the NFT)
+      const sellerAddress = currentOwner;
+      if (!sellerAddress) {
+        toast({
+          title: "Purchase Error",
+          description: "Unable to determine NFT owner",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      console.log(`Initiating purchase from seller: ${sellerAddress}`);
+
+      // Execute blockchain transaction
+      const buyParams = {
+        marketplaceId: MARKETPLACE_OBJECT_ID,
+        listingId: nft.id, // Assuming the NFT ID is the listing ID
+        nftId: nft.sui_object_id || nft.id,
+        price: nft.price,
+        buyerAddress: wallet.address,
+        sellerAddress: sellerAddress, // Use the determined current owner
+      };
+
+      toast({
+        title: "Processing Purchase",
+        description: "Please confirm the transaction in your wallet",
+      });
+
+      console.log('Executing buy transaction with params:', buyParams);
+      const txResult = await executeBuyTransaction(buyParams);
+      console.log('Transaction result:', txResult);
+
+      if (!txResult.success) {
+        throw new Error(txResult.error || 'Transaction failed');
+      }
+
+      // For the simplified transaction, we'll skip the event extraction for now
+      // and proceed directly to recording the transaction
+      
+      // Record transaction in backend
+      await recordBlockchainTransaction({
+        blockchain_tx_id: txResult.txId,
+        listing_id: nft.id,
+        nft_blockchain_id: nft.sui_object_id || nft.id,
+        seller_wallet_address: sellerAddress,
+        buyer_wallet_address: wallet.address,
+        price: nft.price,
+        marketplace_fee: calculateMarketplaceFee(nft.price),
+        seller_amount: nft.price - calculateMarketplaceFee(nft.price),
+        gas_fee: txResult.gasUsed ? txResult.gasUsed / 1_000_000_000 : undefined, // Convert to SUI
+        transaction_type: 'purchase',
+      });
+
+      toast({
+        title: "Purchase Successful!",
+        description: `You have successfully purchased "${nft.title}" for ${nft.price} SUI`,
+        variant: "default"
+      });
+
+      // Refresh the page or navigate to user's collection
+      setTimeout(() => {
+        navigate('/profile');
+      }, 2000);
+
+    } catch (error) {
+      console.error('Purchase failed:', error);
+      toast({
+        title: "Purchase Failed",
+        description: error instanceof Error ? error.message : 'Unknown error occurred',
+        variant: "destructive"
+      });
+    } finally {
+      setIsBuying(false);
+    }
   };
 
   const handleImageLoad = () => {
@@ -247,19 +374,22 @@ export function NftCard({ nft }: NftCardProps) {
             variant={threatLevel === 'danger' ? 'destructive' : 'default'} 
             size="sm" 
             className="flex-1"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (threatLevel === 'danger') {
-                // For flagged items, show review details
-                navigate(`/nft/${nft.id}`);
-              } else {
-                // For safe items, initiate purchase
-                handlePurchase(nft);
-              }
-            }}
-            disabled={threatLevel === 'danger'}
+            onClick={threatLevel === 'danger' ? handleViewClick : handlePurchase}
+            disabled={threatLevel === 'danger' || isBuying}
           >
-            {threatLevel === 'danger' ? 'Review' : 'Buy Now'}
+            {isBuying ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Buying...
+              </>
+            ) : threatLevel === 'danger' ? (
+              'Review'
+            ) : (
+              <>
+                <DollarSign className="w-4 h-4 mr-2" />
+                Buy Now
+              </>
+            )}
           </Button>
           <Button variant="outline" size="sm" onClick={handleViewClick}>
             <Eye className="w-4 h-4" />
