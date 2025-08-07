@@ -94,7 +94,29 @@ ALTER TABLE public.nfts ADD COLUMN IF NOT EXISTS listing_id TEXT;
 ALTER TABLE public.nfts ADD COLUMN IF NOT EXISTS kiosk_id TEXT;
 ALTER TABLE public.nfts ADD COLUMN IF NOT EXISTS listing_status TEXT DEFAULT 'inactive';
 
--- 2.2 Listing History Table for Audit Trail
+-- 2.2 Enhanced Users Table (Add missing fields)
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS location TEXT;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT TRUE;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS profile_completion REAL DEFAULT 0.0;
+ALTER TABLE public.users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW();
+
+-- 2.2.1 Create trigger function for updating user updated_at
+CREATE OR REPLACE FUNCTION update_user_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- 2.2.2 Create trigger for users table
+DROP TRIGGER IF EXISTS trigger_update_user_updated_at ON public.users;
+CREATE TRIGGER trigger_update_user_updated_at
+    BEFORE UPDATE ON public.users
+    FOR EACH ROW
+    EXECUTE FUNCTION update_user_updated_at();
+
+-- 2.3 Listing History Table for Audit Trail
 CREATE TABLE IF NOT EXISTS public.listing_history (
     id UUID NOT NULL DEFAULT gen_random_uuid(),
     listing_id UUID NOT NULL,
@@ -110,20 +132,6 @@ CREATE TABLE IF NOT EXISTS public.listing_history (
     CONSTRAINT listing_history_listing_id_fkey FOREIGN KEY (listing_id) REFERENCES listings(id) ON DELETE CASCADE,
     CONSTRAINT listing_history_nft_id_fkey FOREIGN KEY (nft_id) REFERENCES nfts(id) ON DELETE CASCADE,
     CONSTRAINT listing_history_seller_id_fkey FOREIGN KEY (seller_id) REFERENCES users(id) ON DELETE CASCADE
-) TABLESPACE pg_default;
-
--- 2.3 Marketplace Analytics Table
-CREATE TABLE IF NOT EXISTS public.marketplace_analytics (
-    id UUID NOT NULL DEFAULT gen_random_uuid(),
-    total_listings INTEGER NOT NULL DEFAULT 0,
-    total_volume NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    active_sellers INTEGER NOT NULL DEFAULT 0,
-    total_transactions INTEGER NOT NULL DEFAULT 0,
-    average_price NUMERIC(18, 8) NOT NULL DEFAULT 0,
-    fraud_detection_rate REAL NOT NULL DEFAULT 0.0,
-    last_updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    CONSTRAINT marketplace_analytics_pkey PRIMARY KEY (id)
 ) TABLESPACE pg_default;
 
 -- 2.4 Transaction History Table

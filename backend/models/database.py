@@ -26,12 +26,16 @@ class User(Base):
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     wallet_address = Column(Text, unique=True, nullable=False)
-    email = Column(Text, unique=True, nullable=False)
-    username = Column(Text, nullable=False)
+    email = Column(Text, unique=True, nullable=True)
+    username = Column(Text, nullable=True)
     avatar_url = Column(Text)
     bio = Column(Text)
+    location = Column(Text)  # New field for user location
+    is_public = Column(Boolean, default=True)  # New field for profile visibility
     reputation_score = Column(Float, default=0.0)
+    profile_completion = Column(Float, default=0.0)  # New field for profile completion percentage
     created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)  # New field for tracking updates
 
 class NFT(Base):
     __tablename__ = "nfts"

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
 import { Button } from '@/components/ui/button';
@@ -17,15 +17,21 @@ import {
   Plus,
   DollarSign,
   Clock,
-  Eye
+  Eye,
+  Mail,
+  Edit
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
+import { useProfile } from '@/hooks/useProfile';
 import { ListingManager } from '@/components/ListingManager';
 import { useUserListings, useMarketplaceAnalytics } from '@/hooks/useListings';
+import { ProfileEditModal } from '@/components/ProfileEditModal';
 
 const Profile = () => {
   const { wallet, disconnect, connect } = useWallet();
+  const { profile, loading: profileLoading } = useProfile();
   const [activeTab, setActiveTab] = useState('overview');
+  const [editModalOpen, setEditModalOpen] = useState(false);
 
   // Fetch user's listings
   const { data: userListings } = useUserListings(wallet?.address || '');
@@ -75,19 +81,35 @@ const Profile = () => {
         <div className="mb-8">
           <div className="flex items-center gap-6">
             <Avatar className="w-20 h-20">
-              <AvatarImage src="/placeholder-avatar.png" />
+              <AvatarImage src={profile?.avatar_url || "/placeholder-avatar.png"} />
               <AvatarFallback className="text-2xl">
-                {wallet.address.slice(2, 4).toUpperCase()}
+                {profile?.username?.slice(0, 2).toUpperCase() || wallet.address.slice(2, 4).toUpperCase()}
               </AvatarFallback>
             </Avatar>
             
             <div className="flex-1">
-              <h1 className="text-3xl font-bold text-foreground mb-2">User Profile</h1>
-              <p className="text-muted-foreground mb-4">
-                Manage your NFTs, listings, and account settings
-              </p>
+              <div className="flex items-center gap-4 mb-2">
+                <h1 className="text-3xl font-bold text-foreground">
+                  {profile?.username || 'User Profile'}
+                </h1>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditModalOpen(true)}
+                  className="flex items-center gap-2"
+                >
+                  <Edit className="w-4 h-4" />
+                  Edit Profile
+                </Button>
+              </div>
               
-              <div className="flex items-center gap-4">
+              {profile?.bio && (
+                <p className="text-muted-foreground mb-4 max-w-2xl">
+                  {profile.bio}
+                </p>
+              )}
+              
+              <div className="flex items-center gap-4 flex-wrap">
                 <Badge variant="outline" className="flex items-center gap-2">
                   <Wallet className="w-4 h-4" />
                   {formatAddress(wallet.address)}
@@ -97,6 +119,13 @@ const Profile = () => {
                   <Badge variant="outline" className="flex items-center gap-2">
                     <DollarSign className="w-4 h-4" />
                     {formatBalance(wallet.balance)}
+                  </Badge>
+                )}
+
+                {profile?.email && (
+                  <Badge variant="outline" className="flex items-center gap-2">
+                    <Mail className="w-4 h-4" />
+                    {profile.email}
                   </Badge>
                 )}
                 
@@ -127,13 +156,13 @@ const Profile = () => {
             {
               icon: Clock,
               title: 'Total Sales',
-              value: 0, // TODO: Implement sales tracking
+              value: profile?.total_sales || 0,
               color: 'text-secondary'
             },
             {
               icon: Eye,
               title: 'Profile Views',
-              value: 0, // TODO: Implement profile view tracking
+              value: profile?.profile_views || 0,
               color: 'text-muted-foreground'
             }
           ].map((stat, index) => {
@@ -256,8 +285,23 @@ const Profile = () => {
                     <Settings className="w-5 h-5 text-muted-foreground" />
                     <span className="text-foreground">Profile Settings</span>
                   </div>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" onClick={() => setEditModalOpen(true)}>
                     Edit
+                  </Button>
+                </div>
+                
+                <div className="flex items-center justify-between p-4 bg-muted/20 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <Mail className="w-5 h-5 text-muted-foreground" />
+                    <div>
+                      <span className="text-foreground">Email Address</span>
+                      {profile?.email && (
+                        <p className="text-sm text-muted-foreground">{profile.email}</p>
+                      )}
+                    </div>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={() => setEditModalOpen(true)}>
+                    {profile?.email ? 'Edit' : 'Add'}
                   </Button>
                 </div>
                 
@@ -285,6 +329,12 @@ const Profile = () => {
           </TabsContent>
         </Tabs>
       </div>
+
+      {/* Profile Edit Modal */}
+      <ProfileEditModal 
+        open={editModalOpen} 
+        onOpenChange={setEditModalOpen} 
+      />
     </div>
   );
 };

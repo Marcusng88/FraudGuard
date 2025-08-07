@@ -4,6 +4,7 @@ FastAPI application for AI-powered fraud detection in NFT marketplace
 """
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
@@ -11,6 +12,7 @@ from typing import Dict, List, Optional
 try:
     from fastapi import FastAPI, HTTPException, BackgroundTasks
     from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
     import uvicorn
 except ImportError:
@@ -19,6 +21,7 @@ except ImportError:
     HTTPException = None
     BackgroundTasks = None
     CORSMiddleware = None
+    StaticFiles = None
     BaseModel = None
     uvicorn = None
 
@@ -34,6 +37,7 @@ try:
     from api.nft import router as nft_router
     from api.listings import router as listings_router
     from api.kiosk import router as kiosk_router
+    from api.auth import router as auth_router
     from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
@@ -47,6 +51,7 @@ except ImportError:
     from backend.api.nft import router as nft_router
     from backend.api.listings import router as listings_router
     from backend.api.kiosk import router as kiosk_router
+    from backend.api.auth import router as auth_router
     from backend.database.connection import create_tables
 
 # Configure logging
@@ -141,11 +146,20 @@ if FastAPI:
         allow_headers=["*"],
     )
     
+    # Mount static files only if the directory exists
+    static_dir = "static"
+    if os.path.exists(static_dir):
+        app.mount("/static", StaticFiles(directory=static_dir), name="static")
+        logger.info(f"Mounted static files from {static_dir}")
+    else:
+        logger.warning(f"Static directory '{static_dir}' not found. Static files will not be available.")
+
     # Include routes
     app.include_router(marketplace_router)
     app.include_router(nft_router)
     app.include_router(listings_router)
     app.include_router(kiosk_router)
+    app.include_router(auth_router)
     
 else:
     app = None

@@ -7,7 +7,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks, UploadFile, File
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from sqlalchemy import func
@@ -100,16 +100,37 @@ class UserCreateRequest(BaseModel):
     wallet_address: str
     username: Optional[str] = None
     email: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+class UserUpdateRequest(BaseModel):
+    username: Optional[str] = None
+    email: Optional[str] = None
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None
+    location: Optional[str] = None
+    is_public: Optional[bool] = None
 
 class UserResponse(BaseModel):
     id: UUID
     wallet_address: str
-    username: str
-    email: str
+    username: Optional[str] = None
+    email: Optional[str] = None
     avatar_url: Optional[str] = None
     bio: Optional[str] = None
+    location: Optional[str] = None
+    is_public: bool = True
     reputation_score: float
+    profile_completion: float = 0.0
     created_at: datetime
+    updated_at: Optional[datetime] = None
+    total_nfts: Optional[int] = 0
+    total_sales: Optional[int] = 0
+    total_volume: Optional[float] = 0.0
+    profile_views: Optional[int] = 0
+    
+    class Config:
+        from_attributes = True
 
 class MarketplaceAnalyticsResponse(BaseModel):
     time_period: str
@@ -442,43 +463,49 @@ async def get_user_listings(
         # Convert to response format
         listing_responses = []
         for listing in listings:
-            nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
-            
-            # Safely handle price conversion
             try:
-                price = float(listing.price) if listing.price is not None else 0.0
-            except (TypeError, ValueError):
-                price = 0.0
-            
-            # Safely handle listing_metadata
-            listing_metadata = None
-            if listing.listing_metadata:
+                nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
+                
+                # Safely handle price conversion
                 try:
-                    if isinstance(listing.listing_metadata, dict):
-                        listing_metadata = listing.listing_metadata
-                    else:
-                        listing_metadata = str(listing.listing_metadata)
-                except Exception:
-                    listing_metadata = None
-            
-            listing_response = ListingResponse(
-                id=listing.id,
-                nft_id=listing.nft_id,
-                seller_id=listing.seller_id,
-                price=price,
-                expires_at=listing.expires_at,
-                status=listing.status or "unknown",
-                kiosk_id=listing.kiosk_id,
-                listing_id=listing.listing_id,
-                blockchain_tx_id=listing.blockchain_tx_id,
-                created_at=listing.created_at,
-                updated_at=listing.updated_at,
-                listing_metadata=listing_metadata,
-                nft_title=nft.title if nft else None,
-                nft_image_url=nft.image_url if nft else None,
-                seller_username=user.username
-            )
-            listing_responses.append(listing_response)
+                    price = float(listing.price) if listing.price is not None else 0.0
+                except (TypeError, ValueError):
+                    price = 0.0
+                    logger.warning(f"Invalid price format for listing {listing.id}")
+                
+                # Safely handle listing_metadata
+                listing_metadata = None
+                if listing.listing_metadata:
+                    try:
+                        if isinstance(listing.listing_metadata, dict):
+                            listing_metadata = listing.listing_metadata
+                        else:
+                            listing_metadata = str(listing.listing_metadata)
+                    except Exception as e:
+                        logger.warning(f"Error processing listing metadata for listing {listing.id}: {str(e)}")
+                        listing_metadata = None
+
+                listing_response = ListingResponse(
+                    id=listing.id,
+                    nft_id=listing.nft_id,
+                    seller_id=listing.seller_id,
+                    price=price,
+                    expires_at=listing.expires_at,
+                    status=listing.status or "unknown",
+                    kiosk_id=listing.kiosk_id,
+                    listing_id=listing.listing_id,
+                    blockchain_tx_id=listing.blockchain_tx_id,
+                    created_at=listing.created_at,
+                    updated_at=listing.updated_at,
+                    listing_metadata=listing_metadata,
+                    nft_title=nft.title if nft else None,
+                    nft_image_url=nft.image_url if nft else None,
+                    seller_username=user.username if user else None
+                )
+                listing_responses.append(listing_response)
+            except Exception as e:
+                logger.error(f"Error processing listing {listing.id}: {str(e)}")
+                continue
         
         return listing_responses
         
@@ -877,3 +904,232 @@ async def get_transaction_history(
     except Exception as e:
         logger.error(f"Error fetching transaction history: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch transaction history")
+
+# User Profile Management Endpoints
+
+@router.post("/user", response_model=UserResponse)
+async def create_user(
+    user_data: UserCreateRequest,
+    db: Session = Depends(get_db)
+):
+    """Create a new user profile"""
+    try:
+        # Check if user already exists
+        existing_user = db.query(User).filter(User.wallet_address == user_data.wallet_address).first()
+        if existing_user:
+            # Return existing user with additional stats
+            return await get_user_with_stats(existing_user, db)
+        
+        # Create new user
+        new_user = User(
+            wallet_address=user_data.wallet_address,
+            username=user_data.username or f"User_{user_data.wallet_address[:8]}",
+            email=user_data.email,
+            bio=user_data.bio,
+            avatar_url=user_data.avatar_url,
+            reputation_score=0.0
+        )
+        
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        
+        return await get_user_with_stats(new_user, db)
+        
+    except Exception as e:
+        logger.error(f"Error creating user: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to create user")
+
+@router.get("/user/{wallet_address}/profile", response_model=UserResponse)
+async def get_user_profile(
+    wallet_address: str,
+    db: Session = Depends(get_db)
+):
+    """Get user profile by wallet address"""
+    try:
+        user = db.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return await get_user_with_stats(user, db)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error fetching user profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch user profile")
+
+@router.put("/user/{wallet_address}/profile", response_model=UserResponse)
+async def update_user_profile(
+    wallet_address: str,
+    user_data: UserUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """Update user profile"""
+    try:
+        user = db.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Update fields if provided
+        if user_data.username is not None:
+            user.username = user_data.username
+        if user_data.email is not None:
+            user.email = user_data.email
+        if user_data.bio is not None:
+            user.bio = user_data.bio
+        if user_data.avatar_url is not None:
+            user.avatar_url = user_data.avatar_url
+        if user_data.location is not None:
+            user.location = user_data.location
+        if user_data.is_public is not None:
+            user.is_public = user_data.is_public
+        
+        # Calculate profile completion
+        completion_fields = [
+            user.username,
+            user.email,
+            user.bio,
+            user.location,
+            user.avatar_url
+        ]
+        completed_fields = sum(1 for field in completion_fields if field)
+        user.profile_completion = (completed_fields / len(completion_fields)) * 100
+        
+        # Update the updated_at timestamp
+        user.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(user)
+        
+        return await get_user_with_stats(user, db)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user profile: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Failed to update user profile")
+
+@router.post("/user/{wallet_address}/avatar")
+async def upload_user_avatar(
+    wallet_address: str,
+    avatar: UploadFile = File(...),
+    db: Session = Depends(get_db)
+):
+    """Upload user avatar"""
+    try:
+        user = db.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Validate file type
+        if not avatar.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="File must be an image")
+        
+        # Validate file size (5MB limit)
+        if avatar.size > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="File size must be less than 5MB")
+        
+        # Generate unique filename
+        import uuid
+        import os
+        from datetime import datetime
+        
+        file_extension = os.path.splitext(avatar.filename)[1]
+        filename = f"avatar_{wallet_address}_{uuid.uuid4().hex}{file_extension}"
+        
+        # Create uploads directory if it doesn't exist
+        upload_dir = "static/uploads/avatars"
+        os.makedirs(upload_dir, exist_ok=True)
+        
+        # Save file
+        file_path = os.path.join(upload_dir, filename)
+        with open(file_path, "wb") as buffer:
+            content = await avatar.read()
+            buffer.write(content)
+        
+        # Update user avatar URL
+        avatar_url = f"/static/uploads/avatars/{filename}"
+        user.avatar_url = avatar_url
+        
+        db.commit()
+        
+        return {"avatar_url": avatar_url}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error uploading avatar: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload avatar")
+
+async def get_user_with_stats(user: User, db: Session) -> UserResponse:
+    """Get user with additional statistics"""
+    try:
+        # Get user's NFTs count
+        total_nfts = db.query(NFT).filter(NFT.wallet_address == user.wallet_address).count()
+        
+        # Get user's sales count and volume
+        sales_query = db.query(TransactionHistory).filter(
+            TransactionHistory.seller_id == user.id,
+            TransactionHistory.transaction_type == "purchase",
+            TransactionHistory.status == "completed"
+        )
+        total_sales = sales_query.count()
+        total_volume = sum([tx.price for tx in sales_query.all()]) if total_sales > 0 else 0.0
+        
+        # Get profile views (placeholder - would be implemented with analytics)
+        profile_views = 0
+        
+        # Calculate profile completion
+        completion_fields = [
+            user.username,
+            user.email,
+            user.bio,
+            user.location,
+            user.avatar_url
+        ]
+        completed_fields = sum(1 for field in completion_fields if field)
+        profile_completion = (completed_fields / len(completion_fields)) * 100
+        
+        return UserResponse(
+            id=user.id,
+            wallet_address=user.wallet_address,
+            username=user.username,
+            email=user.email,
+            avatar_url=user.avatar_url,
+            bio=user.bio,
+            location=user.location,
+            is_public=user.is_public,
+            reputation_score=user.reputation_score,
+            profile_completion=profile_completion,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+            total_nfts=total_nfts,
+            total_sales=total_sales,
+            total_volume=total_volume,
+            profile_views=profile_views
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting user stats: {e}")
+        # Return user without stats if stats calculation fails
+        return UserResponse(
+            id=user.id,
+            wallet_address=user.wallet_address,
+            username=user.username,
+            email=user.email,
+            avatar_url=user.avatar_url,
+            bio=user.bio,
+            location=user.location,
+            is_public=user.is_public,
+            reputation_score=user.reputation_score,
+            profile_completion=user.profile_completion or 0.0,
+            created_at=user.created_at,
+            updated_at=user.updated_at,
+            total_nfts=0,
+            total_sales=0,
+            total_volume=0.0,
+            profile_views=0
+        )

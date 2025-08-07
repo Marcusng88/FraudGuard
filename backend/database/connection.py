@@ -7,10 +7,13 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from models.database import Base
 from core.config import settings
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Database URL - using PostgreSQL/Supabase
 DATABASE_URL = settings.supabase_db_url or "postgresql://postgres:password@localhost:5432/fraudguard"
-
+logger.info(f"Database URL: {DATABASE_URL}")
 # Create engine
 engine = create_engine(DATABASE_URL, echo=settings.debug)
 
