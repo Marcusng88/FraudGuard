@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import hackerImage from '../assests/Hacker.png'
+import fraudGuard from '../../public/FraudGuard_Logo.png'
 
 interface HackerSceneProps {
   onHackerClick: () => void
@@ -11,12 +12,24 @@ const HackerScene: React.FC<HackerSceneProps> = ({ onHackerClick, isLocked }) =>
     <div className="relative w-full h-screen bg-gradient-to-br from-gray-900 via-slate-800 to-black overflow-hidden">
       {/* Website Header - FraudGuard */}
       <div className="absolute top-6 left-6 flex items-center space-x-3 z-30">
-        {/* Logo Placeholder */}
-        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg flex items-center justify-center shadow-lg">
-          <div className="w-6 h-6 bg-white rounded-sm flex items-center justify-center">
-            <div className="w-3 h-3 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full"></div>
-          </div>
-        </div>
+        {/* FraudGuard Logo */}
+        <motion.div
+          animate={{ 
+            y: [-4, 4, -4],
+            filter: ["drop-shadow(0 0 8px rgba(59, 130, 246, 0.5))", "drop-shadow(0 0 12px rgba(59, 130, 246, 0.7))", "drop-shadow(0 0 8px rgba(59, 130, 246, 0.5))"]
+          }}
+          transition={{
+            duration: 4,
+            repeat: Infinity,
+            ease: "easeInOut"
+          }}
+        >
+          <img
+            src={fraudGuard}
+            alt="FraudGuard Logo"
+            className="w-10 h-10 rounded-lg shadow-lg"
+          />
+        </motion.div>
         {/* Website Name */}
         <h1 className="text-2xl font-bold text-white tracking-wide">
           <span className="bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">

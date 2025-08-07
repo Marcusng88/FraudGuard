@@ -21,7 +21,11 @@ export function CyberNavigation() {
         {/* Logo */}
         <div className="flex items-center gap-3">
           <div className="relative">
-            <Shield className="w-8 h-8 text-primary animate-float" />
+            <img 
+              src="/FraudGuard_Logo.png" 
+              alt="FraudGuard Logo" 
+              className="w-8 h-8 animate-float"
+            />
             <div className="absolute inset-0 bg-primary/30 blur-lg rounded-full" />
           </div>
           <div>
