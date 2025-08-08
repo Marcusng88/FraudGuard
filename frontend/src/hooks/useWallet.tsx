@@ -24,6 +24,7 @@ interface WalletContextType {
   connect: () => Promise<void>;
   disconnect: () => void;
   isLoading: boolean;
+  refreshBalance: () => Promise<void>;
   // Blockchain transaction methods
   executeBuyTransaction: (params: BuyNFTParams) => Promise<TransactionResult>;
   executeSellTransaction: (params: SellNFTParams) => Promise<TransactionResult>;
@@ -187,6 +188,31 @@ export function WalletProvider({ children }: { children: React.ReactNode }): Rea
     return validateSufficientBalance(wallet.address, amount);
   };
 
+  // Refresh wallet balance
+  const refreshBalance = async () => {
+    if (!currentAccount?.address) {
+      return;
+    }
+
+    try {
+      const balance = await suiClient.getBalance({
+        owner: currentAccount.address,
+        coinType: '0x2::sui::SUI'
+      });
+      
+      const updatedWallet: Wallet = {
+        address: currentAccount.address,
+        isConnected: true,
+        balance: Number(balance.totalBalance) / 1000000000, // Convert from MIST to SUI
+      };
+      
+      setWallet(updatedWallet);
+      localStorage.setItem('wallet', JSON.stringify(updatedWallet));
+    } catch (error) {
+      console.error('Failed to refresh balance:', error);
+    }
+  };
+
   // Check for existing wallet connection on mount
   useEffect(() => {
     const savedWallet = localStorage.getItem('wallet');
@@ -210,6 +236,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }): Rea
       connect, 
       disconnect, 
       isLoading: isLoading || connectWallet.isPending || disconnectWallet.isPending,
+      refreshBalance,
       // Blockchain methods
       executeBuyTransaction: handleBuyTransaction,
       executeSellTransaction: handleSellTransaction,

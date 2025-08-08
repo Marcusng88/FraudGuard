@@ -51,8 +51,8 @@ async def record_blockchain_transaction(
     # Verify the NFT exists (use sui_object_id which matches the database schema)
     nft = db.query(NFT).filter(NFT.sui_object_id == transaction.nft_blockchain_id).first()
     if not nft:
-        # Fallback: try to find by NFT ID
-        nft = db.query(NFT).filter(NFT.id == transaction.listing_id).first()
+        # Fallback: try to find by the NFT ID associated with this listing
+        nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
 
@@ -115,13 +115,17 @@ async def get_transaction_status(
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
         
+    # Calculate derived values since they're not stored in the database
+    marketplace_fee = float(tx.price) * 0.025  # 2.5% marketplace fee
+    seller_amount = float(tx.price) - marketplace_fee
+        
     return BlockchainTransactionResponse(
         blockchain_tx_id=tx.blockchain_tx_id,
         status=tx.status,
-        price=tx.price,
-        marketplace_fee=tx.marketplace_fee,
-        seller_amount=tx.seller_amount,
-        gas_fee=tx.gas_fee,
+        price=float(tx.price),
+        marketplace_fee=marketplace_fee,
+        seller_amount=seller_amount,
+        gas_fee=float(tx.gas_fee) if tx.gas_fee else None,
         created_at=tx.created_at,
         transaction_type=tx.transaction_type
     )

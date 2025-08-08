@@ -104,7 +104,8 @@ class UserResponse(BaseModel):
     wallet_address: str
     username: str
     email: str
-    bio: Optional[str] = None  # Removed avatar_url as it doesn't exist in database
+    bio: Optional[str] = None
+    avatar_url: Optional[str] = None  # This will be handled in frontend, not stored in DB
     reputation_score: float
     created_at: datetime
 
@@ -142,6 +143,7 @@ async def create_user(
                 username=existing_user.username,
                 email=existing_user.email,
                 bio=existing_user.bio,
+                avatar_url=None,  # Not stored in database
                 reputation_score=existing_user.reputation_score,
                 created_at=existing_user.created_at
             )
@@ -163,6 +165,7 @@ async def create_user(
             username=new_user.username,
             email=new_user.email,
             bio=new_user.bio,
+            avatar_url=None,  # Not stored in database
             reputation_score=new_user.reputation_score,
             created_at=new_user.created_at
         )
@@ -170,6 +173,83 @@ async def create_user(
     except Exception as e:
         logger.error(f"Error creating user: {e}")
         raise HTTPException(status_code=500, detail="Failed to create user")
+
+@router.get("/user/{wallet_address}/profile", response_model=UserResponse)
+async def get_user_profile(
+    wallet_address: str,
+    db: Session = Depends(get_db)
+):
+    """Get user profile by wallet address"""
+    try:
+        user = db.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return UserResponse(
+            id=user.id,
+            wallet_address=user.wallet_address,
+            username=user.username,
+            email=user.email,
+            bio=user.bio,
+            avatar_url=None,  # Not stored in database
+            reputation_score=user.reputation_score,
+            created_at=user.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get user profile")
+
+class UserUpdateRequest(BaseModel):
+    username: Optional[str] = None
+    bio: Optional[str] = None
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+
+@router.put("/user/{wallet_address}/profile", response_model=UserResponse)
+async def update_user_profile(
+    wallet_address: str,
+    user_data: UserUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """Update user profile"""
+    try:
+        user = db.query(User).filter(User.wallet_address == wallet_address).first()
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        # Update fields if provided (avatar_url is ignored as it's not stored in DB)
+        if user_data.username is not None:
+            user.username = user_data.username
+        if user_data.bio is not None:
+            user.bio = user_data.bio
+        if user_data.email is not None:
+            user.email = user_data.email
+        # Note: avatar_url is not stored in database
+        
+        user.updated_at = datetime.utcnow()
+        
+        db.commit()
+        db.refresh(user)
+        
+        return UserResponse(
+            id=user.id,
+            wallet_address=user.wallet_address,
+            username=user.username,
+            email=user.email,
+            bio=user.bio,
+            avatar_url=None,  # Not stored in database
+            reputation_score=user.reputation_score,
+            created_at=user.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating user profile: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update user profile")
 
 @router.post("/", response_model=ListingResponse)
 async def create_listing(

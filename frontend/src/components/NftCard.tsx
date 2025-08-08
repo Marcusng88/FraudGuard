@@ -9,6 +9,7 @@ import { NFT } from '@/lib/api';
 import { useWallet } from '@/hooks/useWallet';
 import { recordBlockchainTransaction } from '@/lib/api';
 import { extractPurchaseEventData, getTransactionDetails, MARKETPLACE_OBJECT_ID } from '@/lib/blockchain-utils';
+import { createAnalysisPreview } from '@/lib/text-utils';
 
 interface NftCardProps {
   nft: NFT;
@@ -357,7 +358,7 @@ export function NftCard({ nft }: NftCardProps) {
           
           {nft.reason && (
             <div className="text-xs text-muted-foreground bg-muted/30 p-2 rounded">
-              <span className="font-medium">Reason:</span> {nft.reason}
+              <span className="font-medium">Reason:</span> {createAnalysisPreview(nft.reason, 100)}
             </div>
           )}
 

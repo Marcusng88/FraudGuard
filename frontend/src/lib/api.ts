@@ -589,3 +589,55 @@ export async function searchListings(searchQuery: string, filters: {
   
   return response.json();
 }
+
+// Profile Management Interfaces
+export interface UserProfile {
+  id: string;
+  wallet_address: string;
+  username?: string;
+  bio?: string;
+  avatar_url?: string;
+  email?: string;
+  reputation_score: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface UpdateUserProfileRequest {
+  username?: string;
+  bio?: string;
+  avatar_url?: string;
+  email?: string;
+}
+
+// Profile Management API Functions
+export async function getUserProfile(walletAddress: string): Promise<UserProfile> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/user/${walletAddress}/profile`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get user profile');
+  }
+
+  return response.json();
+}
+
+export async function updateUserProfile(
+  walletAddress: string,
+  profileData: UpdateUserProfileRequest
+): Promise<UserProfile> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/user/${walletAddress}/profile`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(profileData),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update user profile');
+  }
+
+  return response.json();
+}

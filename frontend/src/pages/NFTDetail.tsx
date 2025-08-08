@@ -71,7 +71,7 @@ const NFTDetail = () => {
   const { data: similarNFTsData, isLoading: similarLoading } = useSimilarNFTs(nftId);
   
   // Wallet and purchase functionality
-  const { wallet, connect, executeBuyTransaction, validateSufficientBalance, calculateMarketplaceFee } = useWallet();
+  const { wallet, connect, executeBuyTransaction, validateSufficientBalance, calculateMarketplaceFee, refreshBalance } = useWallet();
   const { toast } = useToast();
   const [isBuying, setIsBuying] = useState(false);
 
@@ -319,6 +319,13 @@ const NFTDetail = () => {
         description: `You have successfully purchased "${nft.title}" for ${nft.price} SUI`,
         variant: "default"
       });
+
+      // Refresh wallet balance after successful purchase
+      try {
+        await refreshBalance();
+      } catch (balanceError) {
+        console.error('Failed to refresh balance:', balanceError);
+      }
 
       // Refresh the page or navigate to user's collection
       setTimeout(() => {

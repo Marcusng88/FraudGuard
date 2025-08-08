@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
 import { Button } from '@/components/ui/button';
@@ -20,30 +20,50 @@ import {
   Eye,
   Edit,
   Trash2,
-  Loader2
+  Loader2,
+  RefreshCw
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
 import { ListingManager } from '@/components/ListingManager';
 import { MyNFTs } from '@/components/MyNFTs';
 import { useUserListings, useMarketplaceAnalytics, useUpdateListing, useDeleteListing, useUnlistNFT } from '@/hooks/useListings';
+import { useUserProfile, useUpdateUserProfile } from '@/hooks/useProfile';
 import { useNavigate } from 'react-router-dom';
 import { EditListingDialog } from '@/components/EditListingDialog';
+import { ProfileEditDialog } from '@/components/ProfileEditDialog';
 
 const Profile = () => {
-  const { wallet, disconnect, connect } = useWallet();
+  const { wallet, disconnect, connect, refreshBalance } = useWallet();
   const [activeTab, setActiveTab] = useState('overview');
+  const [isRefreshingBalance, setIsRefreshingBalance] = useState(false);
+  const [isProfileEditOpen, setIsProfileEditOpen] = useState(false);
+  const [userAvatar, setUserAvatar] = useState<string | null>(null);
   const navigate = useNavigate();
 
   // Fetch user's listings
   const { data: userListings } = useUserListings(wallet?.address || '');
   
+  // Fetch user profile data
+  const { data: userProfile, isLoading: isProfileLoading } = useUserProfile(wallet?.address || '');
+  
   // Fetch marketplace analytics
   const { data: analytics } = useMarketplaceAnalytics('24h');
 
-  // Listing mutations
+  // Mutations
   const updateListingMutation = useUpdateListing();
   const deleteListingMutation = useDeleteListing();
   const unlistNFTMutation = useUnlistNFT();
+  const updateProfileMutation = useUpdateUserProfile();
+
+  // Auto-refresh balance when profile loads
+  useEffect(() => {
+    if (wallet?.address) {
+      refreshBalance();
+      // Load avatar from localStorage
+      const savedAvatar = localStorage.getItem(`avatar_${wallet.address}`);
+      setUserAvatar(savedAvatar);
+    }
+  }, [wallet?.address, refreshBalance]);
 
   const formatAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -51,6 +71,42 @@ const Profile = () => {
 
   const formatBalance = (balance: number) => {
     return `${balance.toFixed(2)} SUI`;
+  };
+
+  const handleRefreshBalance = useCallback(async () => {
+    setIsRefreshingBalance(true);
+    try {
+      await refreshBalance();
+    } catch (error) {
+      console.error('Failed to refresh balance:', error);
+    } finally {
+      setIsRefreshingBalance(false);
+    }
+  }, [refreshBalance]);
+
+  const handleSaveProfile = async (profileData: Partial<{ username?: string; bio?: string; avatar_url?: string }>) => {
+    if (!wallet?.address) return;
+    
+    // Update profile in backend (excluding avatar)
+    await updateProfileMutation.mutateAsync({
+      walletAddress: wallet.address,
+      profileData: {
+        username: profileData.username,
+        bio: profileData.bio,
+        email: userProfile?.email // Keep existing email
+      }
+    });
+    
+    // Update local avatar if provided
+    if (profileData.avatar_url !== undefined) {
+      if (profileData.avatar_url) {
+        localStorage.setItem(`avatar_${wallet.address}`, profileData.avatar_url);
+        setUserAvatar(profileData.avatar_url);
+      } else {
+        localStorage.removeItem(`avatar_${wallet.address}`);
+        setUserAvatar(null);
+      }
+    }
   };
 
   const handleViewNFT = (nftId: string) => {
@@ -117,16 +173,21 @@ const Profile = () => {
         <div className="mb-8">
           <div className="flex items-center gap-6">
             <Avatar className="w-20 h-20">
-              <AvatarImage src="/placeholder-avatar.png" />
+              <AvatarImage src={userAvatar || userProfile?.avatar_url || "/placeholder-avatar.png"} />
               <AvatarFallback className="text-2xl">
-                {wallet.address.slice(2, 4).toUpperCase()}
+                {userProfile?.username 
+                  ? userProfile.username.slice(0, 2).toUpperCase()
+                  : wallet.address.slice(2, 4).toUpperCase()
+                }
               </AvatarFallback>
             </Avatar>
             
             <div className="flex-1">
-              <h1 className="text-3xl font-bold text-foreground mb-2">User Profile</h1>
+              <h1 className="text-3xl font-bold text-foreground mb-2">
+                {userProfile?.username || 'User Profile'}
+              </h1>
               <p className="text-muted-foreground mb-4">
-                Manage your NFTs, listings, and account settings
+                {userProfile?.bio || 'Manage your NFTs, listings, and account settings'}
               </p>
               
               <div className="flex items-center gap-4">
@@ -136,10 +197,21 @@ const Profile = () => {
                 </Badge>
                 
                 {wallet.balance && (
-                  <Badge variant="outline" className="flex items-center gap-2">
-                    <DollarSign className="w-4 h-4" />
-                    {formatBalance(wallet.balance)}
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="flex items-center gap-2">
+                      <DollarSign className="w-4 h-4" />
+                      {formatBalance(wallet.balance)}
+                    </Badge>
+                    <Button 
+                      variant="ghost" 
+                      size="sm" 
+                      onClick={handleRefreshBalance}
+                      disabled={isRefreshingBalance}
+                      className="h-8 w-8 p-0"
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isRefreshingBalance ? 'animate-spin' : ''}`} />
+                    </Button>
+                  </div>
                 )}
                 
                 <Button variant="outline" size="sm" onClick={disconnect} className="hover:text-white hover:bg-primary/20 hover:border-primary/50">
@@ -298,7 +370,12 @@ const Profile = () => {
                     <Settings className="w-5 h-5 text-muted-foreground" />
                     <span className="text-foreground">Profile Settings</span>
                   </div>
-                  <Button variant="outline" size="sm" className="hover:text-white hover:bg-primary/20 hover:border-primary/50">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="hover:text-white hover:bg-primary/20 hover:border-primary/50"
+                    onClick={() => setIsProfileEditOpen(true)}
+                  >
                     Edit
                   </Button>
                 </div>
@@ -326,6 +403,20 @@ const Profile = () => {
             </Card>
           </TabsContent>
         </Tabs>
+        
+        {/* Profile Edit Dialog */}
+        <ProfileEditDialog
+          isOpen={isProfileEditOpen}
+          onClose={() => setIsProfileEditOpen(false)}
+          profileData={{
+            wallet_address: wallet.address,
+            username: userProfile?.username,
+            bio: userProfile?.bio,
+            avatar_url: userAvatar || userProfile?.avatar_url,
+          }}
+          onSave={handleSaveProfile}
+          isLoading={updateProfileMutation.isPending}
+        />
       </div>
     </div>
   );
