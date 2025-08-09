@@ -554,6 +554,15 @@ async def get_nfts_by_wallet(
             if nft.analysis_details:
                 analysis_details = safe_serialize_analysis_details(nft.analysis_details)
             
+            # Extract fraud detection info from analysis_details
+            is_fraud = False
+            confidence_score = None
+            reason = None
+            if analysis_details:
+                is_fraud = analysis_details.get('is_fraud', False)
+                confidence_score = analysis_details.get('confidence_score')
+                reason = analysis_details.get('reason')
+            
             nft_responses.append(NFTResponse(
                 id=str(nft.id),
                 sui_object_id=nft.sui_object_id,
@@ -566,9 +575,13 @@ async def get_nfts_by_wallet(
                 attributes=nft.attributes,
                 category=nft.category,
                 initial_price=float(nft.initial_price) if nft.initial_price else None,
+                is_fraud=is_fraud,
+                confidence_score=confidence_score,
+                reason=reason,
                 analysis_details=analysis_details,
                 created_at=nft.created_at,
-                updated_at=nft.updated_at
+                updated_at=nft.updated_at,
+                wallet_address=nft.creator_wallet_address  # Legacy compatibility
             ))
         
         return {
@@ -619,6 +632,15 @@ async def get_marketplace_nfts(
             if nft.analysis_details:
                 analysis_details = safe_serialize_analysis_details(nft.analysis_details)
             
+            # Extract fraud detection info from analysis_details
+            is_fraud = False
+            confidence_score = None
+            reason = None
+            if analysis_details:
+                is_fraud = analysis_details.get('is_fraud', False)
+                confidence_score = analysis_details.get('confidence_score')
+                reason = analysis_details.get('reason')
+            
             nft_response = NFTResponse(
                 id=str(nft.id),
                 sui_object_id=nft.sui_object_id,
@@ -631,9 +653,15 @@ async def get_marketplace_nfts(
                 attributes=nft.attributes,
                 category=nft.category,
                 initial_price=float(nft.initial_price) if nft.initial_price else None,
+                price=float(listing.price) if listing else None,
+                is_listed=nft.is_listed,
+                is_fraud=is_fraud,
+                confidence_score=confidence_score,
+                reason=reason,
                 analysis_details=analysis_details,
                 created_at=nft.created_at,
-                updated_at=nft.updated_at
+                updated_at=nft.updated_at,
+                wallet_address=nft.creator_wallet_address  # Legacy compatibility
             )
             
             # Add listing information
@@ -698,6 +726,15 @@ async def get_all_nfts(
             if nft.analysis_details:
                 analysis_details = safe_serialize_analysis_details(nft.analysis_details)
             
+            # Extract fraud detection info from analysis_details
+            is_fraud = False
+            confidence_score = None
+            reason = None
+            if analysis_details:
+                is_fraud = analysis_details.get('is_fraud', False)
+                confidence_score = analysis_details.get('confidence_score')
+                reason = analysis_details.get('reason')
+            
             nft_responses.append(NFTResponse(
                 id=str(nft.id),
                 sui_object_id=nft.sui_object_id,
@@ -710,9 +747,13 @@ async def get_all_nfts(
                 attributes=nft.attributes,
                 category=nft.category,
                 initial_price=float(nft.initial_price) if nft.initial_price else None,
+                is_fraud=is_fraud,
+                confidence_score=confidence_score,
+                reason=reason,
                 analysis_details=analysis_details,
                 created_at=nft.created_at,
-                updated_at=nft.updated_at
+                updated_at=nft.updated_at,
+                wallet_address=nft.creator_wallet_address  # Legacy compatibility
             ))
         
         return {

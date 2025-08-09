@@ -6,8 +6,11 @@ import requests
 import google.generativeai as genai
 from tavily import TavilyClient
 # ====== API KEYS ======
-TAVILY_API_KEY = "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"
-GOOGLE_API_KEY = "AIzaSyDzyqd7nsKzFqYPUVpkq51LEwRPWLz6maw"
+from dotenv import load_dotenv
+load_dotenv
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 genai.configure(api_key=GOOGLE_API_KEY)
 

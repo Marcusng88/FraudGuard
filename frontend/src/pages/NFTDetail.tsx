@@ -137,11 +137,12 @@ const NFTDetail = () => {
   // When is_fraud = false and confidence >= 0.8, it means high confidence that it's NOT fraud (SAFE)
   // When is_fraud = false and confidence < 0.8, it means low confidence in analysis (SUSPICIOUS)
   // When is_fraud = true, it's flagged regardless of confidence (DANGER)
+  // When confidence_score is null/undefined, it means no analysis has been performed yet (WARNING)
   const isFraud = analysisData?.is_fraud ?? nft.is_fraud;
   const confidenceScore = analysisData?.confidence_score ?? nft.confidence_score;
   const threatLevel = isFraud 
     ? 'danger' 
-    : (confidenceScore && confidenceScore >= 0.8) 
+    : (confidenceScore !== null && confidenceScore !== undefined && confidenceScore >= 0.8) 
       ? 'safe' 
       : 'warning';
   const config = threatConfig[threatLevel];

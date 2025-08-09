@@ -206,25 +206,34 @@ async def get_user_profile(
     wallet_address: str,
     db: Session = Depends(get_db)
 ):
-    """Get user profile by wallet address"""
+    """Get user profile by wallet address, create if doesn't exist"""
     try:
         user = db.query(User).filter(User.wallet_address == wallet_address).first()
         if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+            # Auto-create user if doesn't exist (similar to other endpoints)
+            logger.info(f"Creating new user profile for wallet: {wallet_address}")
+            user = User(
+                wallet_address=wallet_address,
+                username=f"User{wallet_address[:8]}",  # Default username
+                bio=None,
+                email=None,
+                reputation_score=50.0  # Default reputation
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
         
         return UserResponse(
             id=user.id,
             wallet_address=user.wallet_address,
-            username=user.username,
-            email=user.email,
+            username=user.username or f"User{wallet_address[:8]}",
+            email=user.email or "",
             bio=user.bio,
             avatar_url=None,  # Not stored in database
-            reputation_score=user.reputation_score,
+            reputation_score=float(user.reputation_score) if user.reputation_score else 50.0,
             created_at=user.created_at
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error getting user profile: {e}")
         raise HTTPException(status_code=500, detail="Failed to get user profile")

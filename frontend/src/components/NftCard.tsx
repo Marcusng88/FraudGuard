@@ -69,11 +69,19 @@ export function NftCard({ nft }: NftCardProps) {
   // When is_fraud = false and confidence >= 0.8, it means high confidence that it's NOT fraud (SAFE)
   // When is_fraud = false and confidence < 0.8, it means low confidence in analysis (SUSPICIOUS)
   // When is_fraud = true, it's flagged regardless of confidence (DANGER)
+  // When confidence_score is null/undefined, it means no analysis has been performed yet (WARNING)
+  
+  // Debug logging
+  console.log(`NFT ${nft.title} - is_fraud: ${nft.is_fraud}, confidence_score: ${nft.confidence_score}`);
+  
   const threatLevel = nft.is_fraud 
     ? 'danger' 
-    : (nft.confidence_score && nft.confidence_score >= 0.8) 
+    : (nft.confidence_score !== null && nft.confidence_score !== undefined && nft.confidence_score >= 0.8) 
       ? 'safe' 
       : 'warning';
+      
+  console.log(`NFT ${nft.title} - threatLevel: ${threatLevel}`);
+  
   const config = threatConfig[threatLevel];
   const Icon = config.icon;
 

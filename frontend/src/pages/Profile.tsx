@@ -612,7 +612,7 @@ const Profile = () => {
                     <div className="flex items-center justify-between p-4 glass-panel rounded-lg hover-glow">
                       <div className="flex items-center gap-3">
                         <Shield className="w-5 h-5 text-muted-foreground" />
-                        <span className="text-foreground">Security Settings</span>
+                        <span className="text-foreground">Security Settings (under development)</span>
                       </div>
                       <Button variant="outline" size="sm" className="glass-panel hover:bg-primary/20 hover:border-primary/50">
                         Configure
@@ -622,7 +622,7 @@ const Profile = () => {
                     <div className="flex items-center justify-between p-4 glass-panel rounded-lg hover-glow">
                       <div className="flex items-center gap-3">
                         <AlertTriangle className="w-5 h-5 text-muted-foreground" />
-                        <span className="text-foreground">Notification Preferences</span>
+                        <span className="text-foreground">Notification Preferences (under development)</span>
                       </div>
                       <Button variant="outline" size="sm" className="glass-panel hover:bg-primary/20 hover:border-primary/50">
                         Manage
@@ -672,16 +672,6 @@ const Profile = () => {
                       <Badge variant={listing.status === 'active' ? 'default' : 'secondary'}>
                         {listing.status}
                       </Badge>
-                      {/* Show blockchain compatibility indicator */}
-                      {listing.listing_metadata?.blockchain_listing_id ? (
-                        <Badge variant="outline" className="text-green-600 border-green-600">
-                          🔗 Blockchain
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-orange-600 border-orange-600">
-                          📄 Database Only
-                        </Badge>
-                      )}
                     </div>
                   </div>
                 </div>

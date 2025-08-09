@@ -66,7 +66,7 @@ export function MyNFTs() {
         matchesFilter = !nft.is_listed;
         break;
       case 'flagged':
-        matchesFilter = nft.is_fraud || nft.confidence_score > 0.7;
+        matchesFilter = nft.is_fraud === true;
         break;
       default:
         matchesFilter = true;
@@ -347,12 +347,23 @@ export function MyNFTs() {
   };
 
   const getStatusBadge = (nft: NFT) => {
-    if (nft.is_fraud || nft.confidence_score > 0.7) {
+    // First check fraud status - this takes priority
+    if (nft.is_fraud) {
       return <Badge variant="destructive" className="text-xs">Flagged</Badge>;
     }
+    
+    // Then check if it's listed (business status)
     if (nft.is_listed) {
       return <Badge variant="default" className="text-xs">Listed</Badge>;
     }
+    
+    // Finally check AI verification status for unlisted NFTs
+    if (typeof nft.confidence_score === 'number' && nft.confidence_score >= 0.8) {
+      return <Badge variant="outline" className="text-xs text-green-600 border-green-600">Verified</Badge>;
+    } else if (typeof nft.confidence_score === 'number' && nft.confidence_score > 0) {
+      return <Badge variant="outline" className="text-xs text-yellow-600 border-yellow-600">Under Review</Badge>;
+    }
+    
     if (nft.status === 'minted') {
       return <Badge variant="secondary" className="text-xs">Available</Badge>;
     }
@@ -410,7 +421,7 @@ export function MyNFTs() {
             { label: 'All', value: 'all' as const, count: nfts.length },
             { label: 'Listed', value: 'listed' as const, count: nfts.filter(n => n.is_listed).length },
             { label: 'Unlisted', value: 'unlisted' as const, count: nfts.filter(n => !n.is_listed).length },
-            { label: 'Flagged', value: 'flagged' as const, count: nfts.filter(n => n.is_fraud || n.confidence_score > 0.7).length }
+            { label: 'Flagged', value: 'flagged' as const, count: nfts.filter(n => n.is_fraud === true).length }
           ].map((filter) => (
             <Button
               key={filter.value}
@@ -485,7 +496,7 @@ export function MyNFTs() {
                 <div className="absolute top-2 right-2">
                   {getStatusBadge(nft)}
                 </div>
-                {(nft.is_fraud || nft.confidence_score > 0.7) && (
+                {nft.is_fraud && (
                   <div className="absolute top-2 left-2">
                     <Badge variant="destructive" className="text-xs">
                       <AlertTriangle className="w-3 h-3 mr-1" />
