@@ -7,6 +7,7 @@ import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timedelta
 from uuid import UUID
+import uuid
 
 from fastapi import APIRouter, HTTPException, Depends, Query, BackgroundTasks
 from pydantic import BaseModel, Field
@@ -35,6 +36,32 @@ class ListingCreate(BaseModel):
     price: float
     expires_at: Optional[datetime] = None
     listing_metadata: Optional[Dict[str, Any]] = None
+    blockchain_tx_id: Optional[str] = None  # Add blockchain transaction ID
+    blockchain_listing_id: Optional[str] = None  # Add blockchain listing ID
+
+class ListingConfirm(BaseModel):
+    listing_id: UUID
+    blockchain_tx_id: str
+    blockchain_listing_id: Optional[str] = None
+    gas_fee: Optional[float] = None
+
+class BlockchainListingCreate(BaseModel):
+    nft_id: UUID
+    price: float
+    blockchain_listing_id: str
+    blockchain_tx_id: str
+    gas_fee: Optional[float] = None
+
+class UnlistingConfirm(BaseModel):
+    listing_id: UUID
+    blockchain_tx_id: str
+    gas_fee: Optional[float] = None
+
+class EditListingConfirm(BaseModel):
+    listing_id: UUID
+    new_price: float
+    blockchain_tx_id: str
+    gas_fee: Optional[float] = None
 
 class ListingUpdate(BaseModel):
     price: Optional[float] = None
@@ -315,20 +342,222 @@ async def create_listing(
                 listing_metadata=listing_data.listing_metadata,
                 status="active"
             )
-            
+
             db.add(listing)
             db.commit()
             db.refresh(listing)
-            
+
             # Update NFT listing status
             nft.is_listed = True
+
+            # Record transaction history if blockchain data is provided
+            if listing_data.blockchain_tx_id:
+                transaction = TransactionHistory(
+                    nft_id=listing_data.nft_id,
+                    listing_id=listing.id,
+                    seller_wallet_address=nft.owner_wallet_address,
+                    buyer_wallet_address="",  # No buyer for listing
+                    price=listing_data.price,
+                    transaction_type="listing",
+                    status="completed",
+                    blockchain_tx_id=listing_data.blockchain_tx_id,
+                    gas_fee=0.0
+                )
+                db.add(transaction)
+
             db.commit()
-            
+
+            logger.info(f"Created listing {listing.id} for NFT {listing_data.nft_id} with blockchain tx: {listing_data.blockchain_tx_id}")
+
             return listing
         
     except Exception as e:
         logger.error(f"Error creating listing: {e}")
         raise HTTPException(status_code=500, detail="Failed to create listing")
+
+@router.put("/{listing_id}/confirm-listing")
+async def confirm_listing(
+    listing_id: str,
+    confirm_data: ListingConfirm,
+    db: Session = Depends(get_db)
+):
+    """
+    Confirm listing has been created on blockchain and update status
+    Follows the same pattern as NFT minting confirmation
+    """
+    try:
+        # Validate UUID format
+        try:
+            uuid.UUID(listing_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid listing ID format")
+
+        listing = db.query(Listing).filter(Listing.id == listing_id).first()
+        if not listing:
+            raise HTTPException(status_code=404, detail="Listing not found")
+
+        # Update listing with blockchain transaction data
+        listing.listing_metadata = listing.listing_metadata or {}
+        listing.listing_metadata.update({
+            "blockchain_tx_id": confirm_data.blockchain_tx_id,
+            "blockchain_listing_id": confirm_data.blockchain_listing_id,
+            "confirmed_at": datetime.utcnow().isoformat()
+        })
+        listing.updated_at = datetime.utcnow()
+
+        # Record transaction history
+        transaction = TransactionHistory(
+            nft_id=listing.nft_id,
+            listing_id=listing.id,
+            seller_wallet_address=listing.seller_wallet_address,
+            buyer_wallet_address="",  # No buyer for listing
+            price=listing.price,
+            transaction_type="listing",
+            status="completed",
+            blockchain_tx_id=confirm_data.blockchain_tx_id,
+            gas_fee=confirm_data.gas_fee or 0.0
+        )
+        db.add(transaction)
+
+        db.commit()
+
+        logger.info(f"Confirmed listing {listing_id} with blockchain tx: {confirm_data.blockchain_tx_id}")
+
+        return {
+            "success": True,
+            "listing_id": str(listing.id),
+            "blockchain_tx_id": confirm_data.blockchain_tx_id,
+            "message": "Listing confirmed on blockchain"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error confirming listing: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error confirming listing: {str(e)}")
+
+@router.put("/{listing_id}/confirm-unlisting")
+async def confirm_unlisting(
+    listing_id: str,
+    confirm_data: UnlistingConfirm,
+    db: Session = Depends(get_db)
+):
+    """
+    Confirm listing has been unlisted on blockchain and update status
+    """
+    try:
+        # Validate UUID format
+        try:
+            uuid.UUID(listing_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid listing ID format")
+
+        listing = db.query(Listing).filter(Listing.id == listing_id).first()
+        if not listing:
+            raise HTTPException(status_code=404, detail="Listing not found")
+
+        # Update listing status to cancelled
+        listing.status = "cancelled"
+        listing.updated_at = datetime.utcnow()
+
+        # Update NFT listing status
+        nft = db.query(NFT).filter(NFT.id == listing.nft_id).first()
+        if nft:
+            nft.is_listed = False
+
+        # Record transaction history
+        transaction = TransactionHistory(
+            nft_id=listing.nft_id,
+            listing_id=listing.id,
+            seller_wallet_address=listing.seller_wallet_address,
+            buyer_wallet_address="",  # No buyer for unlisting
+            price=listing.price,
+            transaction_type="unlisting",
+            status="completed",
+            blockchain_tx_id=confirm_data.blockchain_tx_id,
+            gas_fee=confirm_data.gas_fee or 0.0
+        )
+        db.add(transaction)
+
+        db.commit()
+
+        logger.info(f"Confirmed unlisting {listing_id} with blockchain tx: {confirm_data.blockchain_tx_id}")
+
+        return {
+            "success": True,
+            "listing_id": str(listing.id),
+            "blockchain_tx_id": confirm_data.blockchain_tx_id,
+            "message": "Unlisting confirmed on blockchain"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error confirming unlisting: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error confirming unlisting: {str(e)}")
+
+@router.put("/{listing_id}/confirm-edit")
+async def confirm_edit_listing(
+    listing_id: str,
+    confirm_data: EditListingConfirm,
+    db: Session = Depends(get_db)
+):
+    """
+    Confirm listing has been edited on blockchain and update status
+    """
+    try:
+        # Validate UUID format
+        try:
+            uuid.UUID(listing_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid listing ID format")
+
+        listing = db.query(Listing).filter(Listing.id == listing_id).first()
+        if not listing:
+            raise HTTPException(status_code=404, detail="Listing not found")
+
+        # Store old price for transaction history
+        old_price = listing.price
+
+        # Update listing with new price
+        listing.price = confirm_data.new_price
+        listing.updated_at = datetime.utcnow()
+
+        # Record transaction history
+        transaction = TransactionHistory(
+            nft_id=listing.nft_id,
+            listing_id=listing.id,
+            seller_wallet_address=listing.seller_wallet_address,
+            buyer_wallet_address="",  # No buyer for edit listing
+            price=confirm_data.new_price,
+            transaction_type="edit_listing",
+            status="completed",
+            blockchain_tx_id=confirm_data.blockchain_tx_id,
+            gas_fee=confirm_data.gas_fee or 0.0
+        )
+        db.add(transaction)
+
+        db.commit()
+
+        logger.info(f"Confirmed edit listing {listing_id} from {old_price} to {confirm_data.new_price} with blockchain tx: {confirm_data.blockchain_tx_id}")
+
+        return {
+            "success": True,
+            "listing_id": str(listing.id),
+            "old_price": float(old_price),
+            "new_price": confirm_data.new_price,
+            "blockchain_tx_id": confirm_data.blockchain_tx_id,
+            "message": "Listing edit confirmed on blockchain"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error confirming edit listing: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error confirming edit listing: {str(e)}")
 
 @router.get("/debug/all", response_model=List[Dict])
 async def debug_all_listings(db: Session = Depends(get_db)):
@@ -350,6 +579,83 @@ async def debug_all_listings(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error in debug endpoint: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/create-with-blockchain")
+async def create_listing_with_blockchain(
+    listing_data: BlockchainListingCreate,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a listing with blockchain data (blockchain-first approach)
+    """
+    try:
+        # Validate NFT exists
+        nft = db.query(NFT).filter(NFT.id == listing_data.nft_id).first()
+        if not nft:
+            raise HTTPException(status_code=404, detail="NFT not found")
+
+        # Check if NFT is already listed
+        existing_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == listing_data.nft_id,
+                Listing.status == "active"
+            )
+        ).first()
+
+        if existing_listing:
+            raise HTTPException(status_code=400, detail="NFT is already listed")
+
+        # Create listing with blockchain data
+        listing = Listing(
+            nft_id=listing_data.nft_id,
+            seller_wallet_address=nft.owner_wallet_address,
+            price=listing_data.price,
+            status="active",
+            listing_metadata={
+                "blockchain_listing_id": listing_data.blockchain_listing_id,
+                "blockchain_tx_id": listing_data.blockchain_tx_id,
+                "created_via": "blockchain_first_flow"
+            }
+        )
+
+        db.add(listing)
+
+        # Update NFT listing status
+        nft.is_listed = True
+        nft.price = listing_data.price
+
+        # Record transaction history
+        transaction = TransactionHistory(
+            nft_id=listing_data.nft_id,
+            listing_id=listing.id,
+            seller_wallet_address=nft.owner_wallet_address,
+            buyer_wallet_address="",
+            price=listing_data.price,
+            transaction_type="listing",
+            status="completed",
+            blockchain_tx_id=listing_data.blockchain_tx_id,
+            gas_fee=listing_data.gas_fee or 0.0
+        )
+        db.add(transaction)
+
+        db.commit()
+
+        logger.info(f"Created listing with blockchain data: {listing.id}")
+
+        return {
+            "success": True,
+            "listing_id": str(listing.id),
+            "blockchain_listing_id": listing_data.blockchain_listing_id,
+            "blockchain_tx_id": listing_data.blockchain_tx_id,
+            "message": "Listing created with blockchain data"
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating listing with blockchain data: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error creating listing: {str(e)}")
 
 @router.get("/", response_model=List[ListingResponse])
 async def get_listings(

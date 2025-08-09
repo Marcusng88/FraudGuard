@@ -1265,6 +1265,151 @@ async def get_similar_nfts(
         logger.error(f"Error getting similar NFTs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting similar NFTs: {str(e)}")
 
+@router.post("/notify-listed")
+async def notify_nft_listed(
+    notification: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Frontend notifies backend when an NFT is listed on Sui blockchain
+    """
+    try:
+        logger.info(f"Received NFT listing notification: {notification}")
+
+        nft_id = notification.get("nft_id")
+        listing_id = notification.get("listing_id")
+        transaction_digest = notification.get("transaction_digest")
+        price = notification.get("price")
+
+        if not nft_id:
+            raise HTTPException(status_code=400, detail="NFT ID is required")
+
+        # Find the NFT
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not nft:
+            raise HTTPException(status_code=404, detail="NFT not found")
+
+        # Update NFT listing status
+        nft.is_listed = True
+
+        # Record transaction history
+        transaction = TransactionHistory(
+            nft_id=nft_id,
+            listing_id=None,  # We'll update this when we get the listing from database
+            seller_wallet_address=nft.owner_wallet_address,
+            buyer_wallet_address="",  # No buyer for listing
+            price=price or 0,
+            transaction_type="listing",
+            status="completed",
+            blockchain_tx_id=transaction_digest or "",
+            gas_fee=0.0
+        )
+
+        db.add(transaction)
+        db.commit()
+
+        logger.info(f"Updated NFT {nft_id} listing status after blockchain transaction")
+
+        return {
+            "success": True,
+            "message": "NFT listing notification processed",
+            "nft_id": nft_id,
+            "transaction_digest": transaction_digest
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing NFT listing notification: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error processing notification: {str(e)}")
+
+@router.post("/notify-unlisted")
+async def notify_nft_unlisted(
+    notification: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db)
+):
+    """
+    Frontend notifies backend when an NFT is unlisted on Sui blockchain
+    """
+    try:
+        logger.info(f"Received NFT unlisting notification: {notification}")
+
+        nft_id = notification.get("nft_id")
+        listing_id = notification.get("listing_id")
+        transaction_digest = notification.get("transaction_digest")
+
+        if not nft_id:
+            raise HTTPException(status_code=400, detail="NFT ID is required")
+
+        # Find the NFT
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not nft:
+            raise HTTPException(status_code=404, detail="NFT not found")
+
+        # Find and cancel the active listing for this NFT
+        active_listing = db.query(Listing).filter(
+            and_(
+                Listing.nft_id == nft_id,
+                Listing.status == "active"
+            )
+        ).first()
+
+        if active_listing:
+            # Cancel the listing
+            active_listing.status = "cancelled"
+            active_listing.updated_at = datetime.utcnow()
+
+            # Update NFT listing status
+            nft.is_listed = False
+
+            # Record transaction history
+            transaction = TransactionHistory(
+                nft_id=nft_id,
+                listing_id=active_listing.id,
+                seller_wallet_address=active_listing.seller_wallet_address,
+                buyer_wallet_address="",  # No buyer for unlisting
+                price=active_listing.price,
+                transaction_type="unlisting",
+                status="completed",
+                blockchain_tx_id=transaction_digest or "",
+                gas_fee=0.0
+            )
+
+            db.add(transaction)
+            db.commit()
+
+            logger.info(f"Unlisted NFT {nft_id} - cancelled listing {active_listing.id}")
+
+            return {
+                "success": True,
+                "message": "NFT unlisting notification processed",
+                "nft_id": nft_id,
+                "listing_id": str(active_listing.id),
+                "transaction_digest": transaction_digest
+            }
+        else:
+            # Just update the NFT status even if no active listing found
+            nft.is_listed = False
+            db.commit()
+
+            logger.warning(f"No active listing found for NFT {nft_id}, but updated NFT status")
+
+            return {
+                "success": True,
+                "message": "NFT status updated (no active listing found)",
+                "nft_id": nft_id,
+                "transaction_digest": transaction_digest
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error processing NFT unlisting notification: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error processing notification: {str(e)}")
+
 @router.put("/{nft_id}/unlist")
 async def unlist_nft(
     nft_id: str,
@@ -1279,12 +1424,12 @@ async def unlist_nft(
             uuid.UUID(nft_id)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid NFT ID format")
-        
+
         # Find the NFT
         nft = db.query(NFT).filter(NFT.id == nft_id).first()
         if not nft:
             raise HTTPException(status_code=404, detail="NFT not found")
-        
+
         # Find and cancel the active listing for this NFT
         active_listing = db.query(Listing).filter(
             and_(
@@ -1292,15 +1437,15 @@ async def unlist_nft(
                 Listing.status == "active"
             )
         ).first()
-        
+
         if active_listing:
             # Cancel the listing
             active_listing.status = "cancelled"
             active_listing.updated_at = datetime.utcnow()
-            
+
             # Update NFT listing status
             nft.is_listed = False
-            
+
             # Record transaction history
             transaction = TransactionHistory(
                 nft_id=nft_id,
@@ -1313,12 +1458,12 @@ async def unlist_nft(
                 blockchain_tx_id="",  # No blockchain transaction for unlisting
                 gas_fee=0.0
             )
-            
+
             db.add(transaction)
             db.commit()
-            
+
             logger.info(f"Unlisted NFT {nft_id} - cancelled listing {active_listing.id}")
-            
+
             return {
                 "success": True,
                 "message": "NFT unlisted successfully",
@@ -1327,7 +1472,7 @@ async def unlist_nft(
             }
         else:
             raise HTTPException(status_code=404, detail="No active listing found for this NFT")
-        
+
     except HTTPException:
         raise
     except Exception as e:

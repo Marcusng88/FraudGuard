@@ -10,7 +10,8 @@ import { Transaction } from '@mysten/sui/transactions';
 const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
 // Contract addresses (these should be environment variables in production)
-export const MARKETPLACE_PACKAGE_ID = import.meta.env.VITE_MARKETPLACE_PACKAGE_ID || '0xc641fa0c43224cf06fa7ca433d80641a93adb98f1679036de6dc6088714752ed';
+// Using the same package ID as the NFT minting since they're in the same deployed package
+export const MARKETPLACE_PACKAGE_ID = '0x7ae460902e9017c7c9a5c898443105435b7393fc5776ace61b2f0c6a1f578381';
 export const MARKETPLACE_OBJECT_ID = import.meta.env.VITE_MARKETPLACE_OBJECT_ID || '0x...'; // This needs to be set to actual marketplace object
 
 export interface BuyNFTParams {
@@ -23,14 +24,14 @@ export interface BuyNFTParams {
 }
 
 export interface SellNFTParams {
-  marketplaceId: string;
   nftId: string;
   price: number; // in SUI
-  title: string;
-  description: string;
-  category: string;
-  tags: string[];
-  sellerAddress: string;
+  sellerAddress?: string; // Optional seller address for validation
+}
+
+export interface UnlistNFTParams {
+  listingId: string;
+  sellerAddress?: string; // Optional seller address for validation
 }
 
 export interface TransactionResult {
@@ -39,6 +40,7 @@ export interface TransactionResult {
   error?: string;
   gasUsed?: number;
   effects?: unknown;
+  blockchainListingId?: string | null; // For listing transactions
 }
 
 // Type for transaction results from Sui
@@ -152,38 +154,141 @@ export async function executeBuyTransaction(
 }
 
 /**
- * Execute sell NFT transaction (list NFT) on Sui blockchain
+ * Execute list NFT transaction on Sui blockchain with database sync
  */
-export async function executeSellTransaction(
+export async function executeListNFTTransaction(
   params: SellNFTParams,
   signAndExecuteTransaction: (transaction: Transaction) => Promise<SuiTransactionResult>
 ): Promise<TransactionResult> {
   try {
+    console.log('Starting list NFT transaction with params:', params);
+
+    // Validate inputs
+    if (!params.nftId) {
+      throw new Error('NFT ID is required');
+    }
+    if (!params.price || params.price <= 0) {
+      throw new Error('Valid price is required');
+    }
+
     const transaction = new Transaction();
-    
-    // Convert price to MIST
-    const priceInMist = suiToMist(params.price);
-    
-    // For now, use a simplified version without full metadata
-    // This can be enhanced when the Move contract is ready
+
+    // Convert price to MIST (BigInt for u64)
+    const priceInMist = BigInt(suiToMist(params.price));
+    console.log(`Price in MIST: ${priceInMist.toString()}`);
+    console.log(`NFT ID: ${params.nftId}`);
+
+    // Call the on-chain listing function (use the existing deployed function)
     transaction.moveCall({
       target: `${MARKETPLACE_PACKAGE_ID}::marketplace::list_nft_simple`,
       arguments: [
-        transaction.object(params.marketplaceId),
         transaction.object(params.nftId),
         transaction.pure.u64(priceInMist),
       ],
     });
-    
+
+    console.log('Executing list NFT transaction...');
+    console.log('Transaction details:', {
+      target: `${MARKETPLACE_PACKAGE_ID}::marketplace::list_nft_simple`,
+      nftId: params.nftId,
+      priceInMist: priceInMist.toString()
+    });
+
     // Sign and execute transaction
     const result = await signAndExecuteTransaction(transaction);
-    
-    // For now, if we have a valid digest, consider the transaction successful
+
+    console.log('List NFT transaction result:', result);
+
+    // Extract listing object ID from transaction effects
+    let blockchainListingId: string | null = null;
+    if (result.digest) {
+      try {
+        console.log('Transaction digest:', result.digest);
+        console.log('Transaction effects (raw):', result.effects);
+
+        // Try to extract listing ID from effects
+        blockchainListingId = extractListingId(result.effects);
+        console.log('Extracted blockchain listing ID:', blockchainListingId);
+
+        // If we couldn't extract from effects, try from objectChanges in the result
+        if (!blockchainListingId && (result as any).objectChanges) {
+          console.log('Trying to extract from result.objectChanges:', (result as any).objectChanges);
+          blockchainListingId = extractListingId({ objectChanges: (result as any).objectChanges });
+          console.log('Extracted from result.objectChanges:', blockchainListingId);
+        }
+      } catch (detailError) {
+        console.warn('Could not extract listing ID:', detailError);
+      }
+    }
+
     if (result.digest) {
       return {
         txId: result.digest,
         success: true,
         gasUsed: 0,
+        effects: result.effects,
+        blockchainListingId, // Include the extracted listing ID
+      };
+    } else {
+      return {
+        txId: result.digest || '',
+        success: false,
+        error: 'Transaction failed - no digest received',
+        effects: result.effects,
+        blockchainListingId: null,
+      };
+    }
+  } catch (error) {
+    console.error('List NFT transaction failed:', error);
+    return {
+      txId: '',
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    };
+  }
+}
+
+/**
+ * Execute unlist NFT transaction on Sui blockchain
+ */
+export async function executeUnlistNFTTransaction(
+  params: UnlistNFTParams,
+  signAndExecuteTransaction: (transaction: Transaction) => Promise<SuiTransactionResult>
+): Promise<TransactionResult> {
+  try {
+    console.log('Starting unlist NFT transaction with params:', params);
+
+    // Validate inputs
+    if (!params.listingId) {
+      throw new Error('Listing ID is required');
+    }
+
+    const transaction = new Transaction();
+
+    // Call the on-chain unlisting function
+    transaction.moveCall({
+      target: `${MARKETPLACE_PACKAGE_ID}::marketplace::cancel_listing_simple`,
+      arguments: [
+        transaction.object(params.listingId), // This should be the blockchain listing object ID
+      ],
+    });
+
+    console.log('Executing unlist NFT transaction...');
+    console.log('Transaction details:', {
+      target: `${MARKETPLACE_PACKAGE_ID}::marketplace::cancel_listing_simple`,
+      listingId: params.listingId
+    });
+
+    // Sign and execute transaction
+    const result = await signAndExecuteTransaction(transaction);
+
+    console.log('Unlist NFT transaction result:', result);
+
+    if (result.digest) {
+      return {
+        txId: result.digest,
+        success: true,
+        gasUsed: 0, // We'll get this from the actual transaction later
         effects: result.effects,
       };
     } else {
@@ -195,7 +300,65 @@ export async function executeSellTransaction(
       };
     }
   } catch (error) {
-    console.error('Sell transaction failed:', error);
+    console.error('Unlist NFT transaction failed:', error);
+    return {
+      txId: '',
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error occurred',
+    };
+  }
+}
+
+/**
+ * Execute edit listing price transaction on Sui blockchain with database sync
+ */
+export async function executeEditListingTransaction(
+  params: { listingId: string; newPrice: number },
+  signAndExecuteTransaction: (transaction: Transaction) => Promise<SuiTransactionResult>
+): Promise<TransactionResult> {
+  try {
+    console.log('Starting edit listing transaction with params:', params);
+
+    const transaction = new Transaction();
+
+    // Convert price to MIST (BigInt for u64)
+    const priceInMist = BigInt(suiToMist(params.newPrice));
+    console.log(`New price in MIST: ${priceInMist.toString()}`);
+
+    // Call the on-chain edit listing function (use the existing deployed function)
+    transaction.moveCall({
+      target: `${MARKETPLACE_PACKAGE_ID}::marketplace::update_listing_price`,
+      arguments: [
+        transaction.object(params.listingId),
+        transaction.pure.u64(priceInMist),
+      ],
+    });
+
+    console.log('Transaction prepared, executing...');
+
+    // Sign and execute transaction
+    const result = await signAndExecuteTransaction(transaction);
+
+    console.log('Edit listing transaction result:', result);
+
+    if (result.digest) {
+      return {
+        txId: result.digest,
+        success: true,
+        gasUsed: 0, // We'll get this from the actual transaction later
+        effects: result.effects,
+      };
+    } else {
+      return {
+        txId: result.digest || '',
+        success: false,
+        error: 'Transaction failed - no digest received',
+        effects: result.effects,
+      };
+    }
+
+  } catch (error) {
+    console.error('Edit listing transaction failed:', error);
     return {
       txId: '',
       success: false,
@@ -339,9 +502,131 @@ export function extractListingEventData(transactionEffects: unknown): {
 }
 
 /**
+ * Helper function to extract listing ID from transaction effects
+ * This function extracts the blockchain listing object ID from created objects
+ */
+export function extractListingId(effects: any): string | null {
+  try {
+    console.log('Attempting to extract listing ID from effects:', effects);
+
+    // Look for created objects in the transaction effects
+    if (effects && typeof effects === 'object') {
+      // Method 1: Check effects.created (Sui transaction effects format)
+      if (effects.created && Array.isArray(effects.created)) {
+        console.log('Found effects.created:', effects.created);
+        for (const createdObj of effects.created) {
+          if (createdObj.reference && createdObj.reference.objectId) {
+            console.log('Found created object ID from effects.created:', createdObj.reference.objectId);
+            return createdObj.reference.objectId;
+          }
+        }
+      }
+
+      // Method 2: Check objectChanges (newer Sui format)
+      if (effects.objectChanges && Array.isArray(effects.objectChanges)) {
+        console.log('Found effects.objectChanges:', effects.objectChanges);
+        const createdObjects = effects.objectChanges.filter(
+          (change: any) => change.type === 'created'
+        );
+
+        for (const obj of createdObjects) {
+          // Look for Listing objects specifically
+          if (obj.objectType && obj.objectType.includes('Listing')) {
+            console.log('Found listing object:', obj.objectId);
+            return obj.objectId;
+          }
+
+          // Fallback: return any created object (since list_nft_simple only creates the Listing)
+          if (obj.objectId) {
+            console.log('Found created object (fallback):', obj.objectId);
+            return obj.objectId;
+          }
+        }
+      }
+    }
+
+    console.log('No listing object found in transaction effects');
+    return null;
+  } catch (error) {
+    console.error('Error extracting listing ID:', error);
+    return null;
+  }
+}
+
+/**
+ * Extract blockchain listing object ID from transaction using SUI client
+ */
+export async function extractListingIdFromTransaction(txDigest: string, suiClient: any): Promise<string | null> {
+  try {
+    console.log('Fetching transaction details for:', txDigest);
+
+    const txDetails = await suiClient.getTransactionBlock({
+      digest: txDigest,
+      options: {
+        showEffects: true,
+        showEvents: true,
+        showObjectChanges: true,
+      }
+    });
+
+    console.log('Transaction details:', txDetails);
+
+    // Look for created objects
+    if (txDetails.objectChanges) {
+      for (const change of txDetails.objectChanges) {
+        if (change.type === 'created' && change.objectType && change.objectType.includes('Listing')) {
+          console.log('Found created listing object:', change.objectId);
+          return change.objectId;
+        }
+      }
+    }
+
+    // Also check events for listing ID
+    if (txDetails.events) {
+      for (const event of txDetails.events) {
+        if (event.type && event.type.includes('NFTListed')) {
+          const listingId = event.parsedJson?.listing_id;
+          if (listingId) {
+            console.log('Found listing ID in event:', listingId);
+            return listingId;
+          }
+        }
+      }
+    }
+
+    console.log('No listing object found in transaction');
+    return null;
+  } catch (error) {
+    console.error('Error extracting listing ID from transaction:', error);
+    return null;
+  }
+}
+
+
+
+/**
+ * Helper function to extract unlisting event data from transaction
+ */
+export function extractUnlistingEventData(effects: any): any | null {
+  try {
+    if (effects?.events) {
+      for (const event of effects.events) {
+        if (event.type && event.type.includes('ListingCancelled')) {
+          return event.parsedJson;
+        }
+      }
+    }
+    return null;
+  } catch (error) {
+    console.error('Error extracting unlisting event data:', error);
+    return null;
+  }
+}
+
+/**
  * Estimate gas cost for a transaction
  */
-export async function estimateGasCost(transaction: Transaction): Promise<number> {
+export async function estimateGasCost(_transaction: Transaction): Promise<number> {
   try {
     // This is a simplified estimation - in production you'd want to use
     // the actual gas estimation from the Sui client

@@ -26,19 +26,22 @@ import {
 import { useWallet } from '@/hooks/useWallet';
 import { ListingManager } from '@/components/ListingManager';
 import { MyNFTs } from '@/components/MyNFTs';
-import { useUserListings, useMarketplaceAnalytics, useUpdateListing, useDeleteListing, useUnlistNFT } from '@/hooks/useListings';
+import { useUserListings, useMarketplaceAnalytics, useUpdateListing } from '@/hooks/useListings';
 import { useUserProfile, useUpdateUserProfile } from '@/hooks/useProfile';
+import { confirmUnlisting } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
 import { EditListingDialog } from '@/components/EditListingDialog';
 import { ProfileEditDialog } from '@/components/ProfileEditDialog';
 
 const Profile = () => {
-  const { wallet, disconnect, connect, refreshBalance } = useWallet();
+  const { wallet, disconnect, connect, refreshBalance, executeUnlistNFTTransaction } = useWallet();
   const [activeTab, setActiveTab] = useState('overview');
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false);
   const [isProfileEditOpen, setIsProfileEditOpen] = useState(false);
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
   const navigate = useNavigate();
+  const { toast } = useToast();
 
   // Fetch user's listings
   const { data: userListings } = useUserListings(wallet?.address || '');
@@ -48,11 +51,12 @@ const Profile = () => {
   
   // Fetch marketplace analytics
   const { data: analytics } = useMarketplaceAnalytics('24h');
+  
+  // Note: Removed deleteListing - now using blockchain-first approach
 
   // Mutations
   const updateListingMutation = useUpdateListing();
-  const deleteListingMutation = useDeleteListing();
-  const unlistNFTMutation = useUnlistNFT();
+  // Note: Removed deleteListingMutation and useUnlistNFT() - now using blockchain-first approach
   const updateProfileMutation = useUpdateUserProfile();
 
   // Auto-refresh balance when profile loads
@@ -126,16 +130,121 @@ const Profile = () => {
     }
   };
 
-  const handleUnlistNFT = async (nftId: string) => {
-    if (!wallet?.address) return;
+  const handleUnlistNFT = async (listingId: string) => {
+    if (!wallet?.address) {
+      toast({
+        title: "Error",
+        description: "Wallet not connected",
+        variant: "destructive"
+      });
+      return;
+    }
 
     try {
-      await unlistNFTMutation.mutateAsync({
-        nftId,
-        walletAddress: wallet.address
+      console.log('Starting blockchain-first unlisting for listing ID:', listingId);
+
+      // Step 1: Get the listing details to extract blockchain_listing_id
+      const listing = userListings?.find(l => l.id === listingId);
+
+      if (!listing) {
+        throw new Error('Listing not found');
+      }
+
+      console.log('Found listing:', listing);
+      console.log('Listing metadata:', listing.listing_metadata);
+      console.log('Listing metadata (alt):', listing.metadata);
+
+      // Extract blockchain_listing_id from metadata
+      // The blockchain listing ID is the Sui object ID of the Listing object created by list_nft_simple
+      const blockchainListingId = listing.listing_metadata?.blockchain_listing_id ||
+                                  listing.metadata?.blockchain_listing_id;
+
+      if (!blockchainListingId || typeof blockchainListingId !== 'string') {
+        console.error('No blockchain listing ID found in listing metadata');
+        console.error('Available listing data:', {
+          id: listing.id,
+          nft_id: listing.nft_id,
+          metadata: listing.metadata,
+          listing_metadata: listing.listing_metadata
+        });
+
+        // Check if this is an old listing created via database-first flow
+        const createdVia = listing.listing_metadata?.created_via;
+        if (createdVia === 'my_nfts_component' || createdVia === 'listing_flow_demo' || !createdVia) {
+          console.log('Detected old database-only listing, performing database-only unlisting...');
+
+          toast({
+            title: "Unlisting (Database Only)...",
+            description: "This listing was never on the blockchain, removing from database only",
+          });
+
+          // For old listings, just update the database since they were never on blockchain
+          await confirmUnlisting(
+            listingId, // Database listing ID
+            'database-only-unlisting', // Fake transaction ID for old listings
+            0 // No gas fee
+          );
+
+          toast({
+            title: "NFT Unlisted Successfully! ✅",
+            description: "Your NFT has been removed from the marketplace (database only)",
+          });
+
+          return; // Exit early for database-only unlisting
+        }
+
+        throw new Error(
+          'Blockchain listing ID not found. This listing was not created through the blockchain-first flow. ' +
+          'Only listings created on the blockchain can be unlisted. Please use the CompleteListingFlow component ' +
+          'to create blockchain-compatible listings.'
+        );
+      }
+
+      console.log('Using blockchain listing ID:', blockchainListingId);
+
+      toast({
+        title: "Unlisting from blockchain...",
+        description: "Please confirm the transaction in your wallet",
       });
+
+      // Step 2: Execute blockchain transaction FIRST
+      // This calls cancel_listing_simple(listing_object) where listing_object has the blockchain_listing_id
+      const txResult = await executeUnlistNFTTransaction({
+        listingId: blockchainListingId, // This is the Sui object ID of the Listing object
+        sellerAddress: wallet.address
+      });
+
+      if (!txResult.success) {
+        throw new Error(txResult.error || 'Blockchain transaction failed');
+      }
+
+      toast({
+        title: "Updating database...",
+        description: "Recording unlisting transaction",
+      });
+
+      // Step 3: Confirm unlisting in database
+      await confirmUnlisting(
+        listingId, // Database listing ID (UUID)
+        txResult.txId,
+        txResult.gasUsed || 0
+      );
+
+      toast({
+        title: "NFT Unlisted Successfully! ✅",
+        description: "Your NFT has been removed from the blockchain marketplace",
+      });
+
+      // Refresh the listings
+      // The mutation will automatically invalidate queries
+
     } catch (error) {
       console.error('Failed to unlist NFT:', error);
+      toast({
+        title: "Unlisting failed",
+        description: error instanceof Error ? error.message : "Failed to unlist NFT. Please try again.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -480,9 +589,21 @@ const EnhancedListingManager = ({
                     <p className="text-sm text-muted-foreground">
                       Listed for {listing.price} SUI
                     </p>
-                    <Badge variant={listing.status === 'active' ? 'default' : 'secondary'}>
-                      {listing.status}
-                    </Badge>
+                    <div className="flex gap-2">
+                      <Badge variant={listing.status === 'active' ? 'default' : 'secondary'}>
+                        {listing.status}
+                      </Badge>
+                      {/* Show blockchain compatibility indicator */}
+                      {(listing as any).listing_metadata?.blockchain_listing_id ? (
+                        <Badge variant="outline" className="text-green-600 border-green-600">
+                          🔗 Blockchain
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline" className="text-orange-600 border-orange-600">
+                          📄 Database Only
+                        </Badge>
+                      )}
+                    </div>
                   </div>
                 </div>
                 
@@ -507,7 +628,7 @@ const EnhancedListingManager = ({
                       <Button
                         variant="destructive"
                         size="sm"
-                        onClick={() => onUnlistNFT(listing.nft_id)}
+                        onClick={() => onUnlistNFT(listing.id)}
                       >
                         <Trash2 className="w-4 h-4 mr-1" />
                         Unlist

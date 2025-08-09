@@ -24,10 +24,10 @@ import {
 import { useWallet } from '@/hooks/useWallet';
 import { useUserNFTs, useCreateListing } from '@/hooks/useListings';
 import { useNavigate } from 'react-router-dom';
-import { NFT } from '@/lib/api';
+import { NFT, createListing, confirmListing } from '@/lib/api';
 
 export function MyNFTs() {
-  const { wallet } = useWallet();
+  const { wallet, executeListNFTTransaction } = useWallet();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'listed' | 'unlisted' | 'flagged'>('all');
@@ -67,14 +67,54 @@ export function MyNFTs() {
   });
 
   const handleListNFT = async () => {
-    if (!selectedNFT || !listingPrice) return;
+    if (!selectedNFT || !listingPrice || !executeListNFTTransaction) return;
 
     try {
-      await createListingMutation.mutateAsync({
+      const price = parseFloat(listingPrice);
+      if (isNaN(price) || price <= 0) {
+        throw new Error("Please enter a valid price");
+      }
+
+      // Step 1: Create listing record in database (following NFT minting pattern)
+      console.log('Creating listing in database...');
+      const listingResponse = await createListing({
         nft_id: selectedNFT.id,
-        price: parseFloat(listingPrice)
+        price: price,
+        expires_at: null,
+        listing_metadata: {
+          title: selectedNFT.title,
+          created_via: "my_nfts_component"
+        }
       });
-      
+
+      console.log('Listing created in database:', listingResponse.id);
+
+      // Step 2: Execute blockchain transaction
+      console.log('Executing blockchain listing transaction...');
+      const blockchainResult = await executeListNFTTransaction({
+        nftId: selectedNFT.sui_object_id || selectedNFT.id,
+        price: price,
+        sellerAddress: wallet?.address
+      });
+
+      if (!blockchainResult.success) {
+        throw new Error(blockchainResult.error || 'Blockchain transaction failed');
+      }
+
+      console.log('Blockchain transaction successful:', blockchainResult.txId);
+      console.log('Blockchain listing ID:', blockchainResult.blockchainListingId);
+
+      // Step 3: Confirm listing in database (following NFT mint confirmation pattern)
+      console.log('Confirming listing with blockchain data...');
+      await confirmListing(
+        listingResponse.id,
+        blockchainResult.txId,
+        blockchainResult.blockchainListingId, // Pass the extracted blockchain listing ID
+        blockchainResult.gasUsed || 0 // Use actual gas used from transaction
+      );
+
+      console.log('Listing confirmed successfully');
+
       setIsListingDialogOpen(false);
       setSelectedNFT(null);
       setListingPrice('');

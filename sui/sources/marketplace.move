@@ -94,12 +94,22 @@ module fraudguard::marketplace {
         timestamp: u64,
     }
 
-    /// Emitted when listing is cancelled
+    /// Emitted when listing is cancelled/unlisted
     public struct ListingCancelled has copy, drop {
         listing_id: ID,
         nft_id: ID,
         seller: address,
         timestamp: u64,
+    }
+
+    /// Emitted when NFT is unlisted (for backend database sync)
+    public struct NFTUnlisted has copy, drop {
+        listing_id: ID,
+        nft_id: ID,
+        seller: address,
+        marketplace_id: ID,
+        timestamp: u64,
+        transaction_digest: vector<u8>,
     }
 
     // ===== Public Functions =====
@@ -182,6 +192,18 @@ module fraudguard::marketplace {
         timestamp: u64,
     }
 
+    /// Emitted when listing is edited (for backend database sync)
+    public struct ListingEdited has copy, drop {
+        listing_id: ID,
+        nft_id: ID,
+        seller: address,
+        old_price: u64,
+        new_price: u64,
+        marketplace_id: ID,
+        timestamp: u64,
+        transaction_digest: vector<u8>,
+    }
+
     // ===== Public Entry Functions =====
 
     /// Create a new marketplace
@@ -217,6 +239,86 @@ module fraudguard::marketplace {
 
         transfer::share_object(marketplace);
         transfer::transfer(cap, owner);
+    }
+
+    /// List an NFT for sale (Simplified - no marketplace object required)
+    public entry fun list_nft_simple(
+        nft: FraudGuardNFT,
+        price: u64,
+        ctx: &mut TxContext
+    ) {
+        assert!(price > 0, EInvalidPrice);
+
+        let seller = tx_context::sender(ctx);
+        let nft_id = fraudguard_nft::get_nft_id(&nft);
+        let listing_id = object::new(ctx);
+        let listing_id_copy = object::uid_to_inner(&listing_id);
+        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+
+        let listing = Listing {
+            id: listing_id,
+            nft_id,
+            seller,
+            price,
+            listed_at: timestamp,
+            is_active: true,
+        };
+
+        // Emit listing event
+        event::emit(NFTListed {
+            listing_id: listing_id_copy,
+            nft_id,
+            seller,
+            price,
+            marketplace_id: object::id_from_address(@0x0), // Use zero address since no marketplace
+            timestamp,
+        });
+
+        // Share listing object
+        transfer::share_object(listing);
+
+        // Keep NFT with seller for now (simplified for hackathon)
+        transfer::public_transfer(nft, seller);
+    }
+
+    /// List an NFT for sale with database sync (follows NFT minting pattern)
+    public entry fun list_nft_with_sync(
+        nft: FraudGuardNFT,
+        price: u64,
+        ctx: &mut TxContext
+    ) {
+        assert!(price > 0, EInvalidPrice);
+
+        let seller = tx_context::sender(ctx);
+        let nft_id = fraudguard_nft::get_nft_id(&nft);
+        let listing_id = object::new(ctx);
+        let listing_id_copy = object::uid_to_inner(&listing_id);
+        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+
+        let listing = Listing {
+            id: listing_id,
+            nft_id,
+            seller,
+            price,
+            listed_at: timestamp,
+            is_active: true,
+        };
+
+        // Emit listing event with transaction digest for backend sync
+        event::emit(NFTListed {
+            listing_id: listing_id_copy,
+            nft_id,
+            seller,
+            price,
+            marketplace_id: object::id_from_address(@0x0), // Use zero address since no marketplace
+            timestamp,
+        });
+
+        // Share listing object
+        transfer::share_object(listing);
+
+        // Keep NFT with seller for now (simplified for hackathon)
+        transfer::public_transfer(nft, seller);
     }
 
     /// List an NFT for sale (Enhanced with better validation and events)
@@ -284,7 +386,7 @@ module fraudguard::marketplace {
         // Share objects
         transfer::share_object(listing);
         transfer::share_object(metadata);
-        
+
         // Keep NFT with seller for now (simplified for hackathon)
         transfer::public_transfer(nft, seller);
     }
@@ -354,6 +456,64 @@ module fraudguard::marketplace {
         };
     }
 
+    /// Cancel a listing (Simplified)
+    public entry fun cancel_listing_simple(
+        listing: Listing,
+        ctx: &mut TxContext
+    ) {
+        assert!(listing.seller == tx_context::sender(ctx), ENotOwner);
+        assert!(listing.is_active, EListingNotActive);
+
+        let listing_id = object::id(&listing);
+        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+
+        // Emit cancellation event
+        event::emit(ListingCancelled {
+            listing_id,
+            nft_id: listing.nft_id,
+            seller: listing.seller,
+            timestamp,
+        });
+
+        // Destroy the listing
+        let Listing { id, nft_id: _, seller: _, price: _, listed_at: _, is_active: _ } = listing;
+        object::delete(id);
+    }
+
+    /// Unlist an NFT with database sync (follows NFT minting pattern)
+    public entry fun unlist_nft_with_sync(
+        listing: Listing,
+        ctx: &mut TxContext
+    ) {
+        assert!(listing.seller == tx_context::sender(ctx), ENotOwner);
+        assert!(listing.is_active, EListingNotActive);
+
+        let listing_id = object::id(&listing);
+        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+
+        // Emit unlisting event for backend sync
+        event::emit(NFTUnlisted {
+            listing_id,
+            nft_id: listing.nft_id,
+            seller: listing.seller,
+            marketplace_id: object::id_from_address(@0x0), // Use zero address since no marketplace
+            timestamp,
+            transaction_digest: b"", // Will be filled by transaction processor
+        });
+
+        // Also emit the standard cancellation event
+        event::emit(ListingCancelled {
+            listing_id,
+            nft_id: listing.nft_id,
+            seller: listing.seller,
+            timestamp,
+        });
+
+        // Destroy the listing
+        let Listing { id, nft_id: _, seller: _, price: _, listed_at: _, is_active: _ } = listing;
+        object::delete(id);
+    }
+
     /// Cancel a listing (Enhanced with events)
     public entry fun cancel_listing(
         listing: Listing,
@@ -395,6 +555,45 @@ module fraudguard::marketplace {
         listing.price = new_price;
 
         // Emit price update event
+        event::emit(ListingPriceUpdated {
+            listing_id: object::id(listing),
+            nft_id: listing.nft_id,
+            seller: listing.seller,
+            old_price,
+            new_price,
+            timestamp,
+        });
+    }
+
+    /// Edit listing price with database sync (follows NFT minting pattern)
+    public entry fun edit_listing_price_with_sync(
+        listing: &mut Listing,
+        new_price: u64,
+        ctx: &mut TxContext
+    ) {
+        assert!(listing.seller == tx_context::sender(ctx), ENotOwner);
+        assert!(listing.is_active, EListingNotActive);
+        assert!(new_price > 0, EInvalidPrice);
+
+        let old_price = listing.price;
+        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+
+        // Update price
+        listing.price = new_price;
+
+        // Emit edit event for backend sync
+        event::emit(ListingEdited {
+            listing_id: object::id(listing),
+            nft_id: listing.nft_id,
+            seller: listing.seller,
+            old_price,
+            new_price,
+            marketplace_id: object::id_from_address(@0x0), // Use zero address since no marketplace
+            timestamp,
+            transaction_digest: b"", // Will be filled by transaction processor
+        });
+
+        // Also emit the standard price update event
         event::emit(ListingPriceUpdated {
             listing_id: object::id(listing),
             nft_id: listing.nft_id,

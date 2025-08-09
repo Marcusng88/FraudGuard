@@ -178,6 +178,96 @@ export async function confirmNFTMint(nftId: string, suiObjectId: string): Promis
   return response.json();
 }
 
+// Listing confirmation functions (following NFT minting pattern)
+export async function confirmListing(listingId: string, blockchainTxId: string, blockchainListingId?: string, gasFee?: number): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}/confirm-listing`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      listing_id: listingId,
+      blockchain_tx_id: blockchainTxId,
+      blockchain_listing_id: blockchainListingId,
+      gas_fee: gasFee
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to confirm listing');
+  }
+
+  return response.json();
+}
+
+export async function confirmUnlisting(listingId: string, blockchainTxId: string, gasFee?: number): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}/confirm-unlisting`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      listing_id: listingId,
+      blockchain_tx_id: blockchainTxId,
+      gas_fee: gasFee
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to confirm unlisting');
+  }
+
+  return response.json();
+}
+
+export async function confirmEditListing(listingId: string, newPrice: number, blockchainTxId: string, gasFee?: number): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}/confirm-edit`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      listing_id: listingId,
+      new_price: newPrice,
+      blockchain_tx_id: blockchainTxId,
+      gas_fee: gasFee
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to confirm edit listing');
+  }
+
+  return response.json();
+}
+
+// Blockchain-first listing creation
+export async function createListingWithBlockchain(data: {
+  nft_id: string;
+  price: number;
+  blockchain_listing_id: string;
+  blockchain_tx_id: string;
+  gas_fee?: number;
+}): Promise<any> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/create-with-blockchain`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create listing with blockchain data');
+  }
+
+  return response.json();
+}
+
 export async function getMarketplaceNFTs(page: number = 1, limit: number = 20): Promise<MarketplaceResponse> {
   const response = await fetch(`${API_BASE_URL}/api/marketplace/nfts?page=${page}&limit=${limit}`);
 
@@ -267,6 +357,7 @@ export interface Listing {
   created_at: string;
   updated_at?: string;
   metadata?: Record<string, unknown>;
+  listing_metadata?: Record<string, unknown>; // Added to match backend response
   nft_title?: string;
   nft_image_url?: string;
   seller_username?: string;
@@ -396,12 +487,55 @@ export async function unlistNFT(nftId: string): Promise<{ message: string }> {
   const response = await fetch(`${API_BASE_URL}/api/nft/${nftId}/unlist`, {
     method: 'PUT',
   });
-  
+
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to unlist NFT');
   }
-  
+
+  return response.json();
+}
+
+export async function notifyNFTListed(notification: {
+  nft_id: string;
+  listing_id?: string;
+  transaction_digest: string;
+  price: number;
+}): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/notify-listed`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(notification),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to notify NFT listing');
+  }
+
+  return response.json();
+}
+
+export async function notifyNFTUnlisted(notification: {
+  nft_id: string;
+  listing_id?: string;
+  transaction_digest: string;
+}): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/notify-unlisted`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(notification),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to notify NFT unlisting');
+  }
+
   return response.json();
 }
 
