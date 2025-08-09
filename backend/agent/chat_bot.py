@@ -52,7 +52,7 @@ def fallback_search(query):
 def summarize_with_gemini(query, context_text):
     """Generate NFT summary with Gemini AI"""
     try:
-        model = genai.GenerativeModel("gemini-2.5-flash")
+        model = genai.GenerativeModel("gemini-2.5-flash-lite")
         prompt = f"""
 You are an expert NFT market analyst and blockchain technology specialist.
 
