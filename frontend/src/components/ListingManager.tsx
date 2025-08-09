@@ -25,7 +25,11 @@ import {
   BarChart3
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
-import { useUserNFTs, useCreateListing, useUpdateListing, useDeleteListing, useUnlistNFT, useUserListings } from '@/hooks/useListings';
+import { useUserNFTs, useCreateListing, useUpdateListing, useDeleteListing, useUserListings } from '@/hooks/useListings';
+import { notifyNFTListed, notifyNFTUnlisted, confirmListing, confirmUnlisting, confirmEditListing, createListing } from '@/lib/api';
+// TODO: Transition to new marketplace system
+// import { extractListingId, extractListingEventData } from '@/lib/blockchain-utils';
+import { useToast } from '@/hooks/use-toast';
 
 interface NFT {
   id: string;
@@ -48,7 +52,7 @@ interface NFTData {
 }
 
 export function ListingManager() {
-  const { wallet } = useWallet();
+  const { wallet, executeListNFTTransaction, executeUnlistNFTTransaction } = useWallet();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'listed' | 'unlisted' | 'flagged'>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -57,6 +61,7 @@ export function ListingManager() {
   const [isListingDialogOpen, setIsListingDialogOpen] = useState(false);
   const [editingNFT, setEditingNFT] = useState<NFT | null>(null);
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
+  const [isUnlisting, setIsUnlisting] = useState(false);
 
   // Fetch user's NFTs
   const { data: nftsData, isLoading, refetch } = useUserNFTs(wallet?.address || '');
@@ -68,7 +73,7 @@ export function ListingManager() {
   const createListingMutation = useCreateListing();
   const updateListingMutation = useUpdateListing();
   const deleteListingMutation = useDeleteListing();
-  const unlistNFTMutation = useUnlistNFT();
+  // Note: Removed useUnlistNFT() - now using blockchain-first approach
 
   // Extract NFTs from the response structure
   const nfts: NFT[] = nftsData?.nfts || [];
@@ -87,7 +92,7 @@ export function ListingManager() {
         matchesFilter = nft.is_listed !== true;
         break;
       case 'flagged':
-        matchesFilter = nft.is_fraud || nft.confidence_score > 0.7;
+        matchesFilter = nft.is_fraud === true;
         break;
       default:
         matchesFilter = true;
@@ -99,22 +104,60 @@ export function ListingManager() {
   // Statistics
   const totalNFTs = nfts.length;
   const listedNFTs = nfts.filter(n => n.is_listed === true).length;
-  const flaggedNFTs = nfts.filter(n => n.is_fraud || n.confidence_score > 0.7).length;
+  const flaggedNFTs = nfts.filter(n => n.is_fraud === true).length;
   const totalListingValue = userListings?.reduce((sum, l) => sum + l.price, 0) || 0;
 
   const handleListNFT = async () => {
-    if (!selectedNFT || !listingPrice) return;
+    if (!selectedNFT || !listingPrice || !executeListNFTTransaction) return;
 
     console.log('Attempting to list NFT:', selectedNFT.id, 'with price:', listingPrice);
 
     try {
-      const result = await createListingMutation.mutateAsync({
+      const price = parseFloat(listingPrice);
+      if (isNaN(price) || price <= 0) {
+        throw new Error("Please enter a valid price");
+      }
+
+      // Step 1: Create listing record in database (following NFT minting pattern)
+      console.log('Creating listing in database...');
+      const listingResponse = await createListing({
         nft_id: selectedNFT.id,
-        price: parseFloat(listingPrice)
+        price: price,
+        expires_at: null,
+        listing_metadata: {
+          title: selectedNFT.title,
+          created_via: "listing_manager"
+        }
       });
-      
-      console.log('Listing created successfully:', result);
-      
+
+      console.log('Listing created in database:', listingResponse.id);
+
+      // Step 2: Execute blockchain transaction
+      console.log('Executing blockchain listing transaction...');
+      const blockchainResult = await executeListNFTTransaction({
+        nftObjectId: selectedNFT.sui_object_id || selectedNFT.id,
+        price: price,
+        sellerAddress: wallet?.address
+      });
+
+      if (!blockchainResult.success) {
+        throw new Error(blockchainResult.error || 'Blockchain transaction failed');
+      }
+
+      console.log('Blockchain transaction successful:', blockchainResult.txId);
+      console.log('Blockchain listing ID:', blockchainResult.blockchainListingId);
+
+      // Step 3: Confirm listing in database (following NFT mint confirmation pattern)
+      console.log('Confirming listing with blockchain data...');
+      await confirmListing(
+        listingResponse.id,
+        blockchainResult.txId,
+        blockchainResult.blockchainListingId, // Pass the extracted blockchain listing ID
+        blockchainResult.gasUsed || 0 // Use actual gas used from transaction
+      );
+
+      console.log('Listing confirmed successfully');
+
       setIsListingDialogOpen(false);
       setSelectedNFT(null);
       setListingPrice('');
@@ -127,8 +170,8 @@ export function ListingManager() {
   };
 
   const handleUnlistNFT = async (nft: NFT) => {
-    if (!wallet?.address) {
-      console.error('No wallet address available');
+    if (!wallet?.address || !executeUnlistNFTTransaction) {
+      console.error('No wallet address or unlist function available');
       return;
     }
 
@@ -136,37 +179,64 @@ export function ListingManager() {
     console.log('Current NFT state:', nft);
     console.log('Wallet address:', wallet.address);
 
+    setIsUnlisting(true);
+
     try {
-      const result = await unlistNFTMutation.mutateAsync({ 
-        nftId: nft.id, 
-        walletAddress: wallet.address 
+      // Step 1: Execute blockchain transaction
+      console.log('Executing blockchain unlisting transaction...');
+      const blockchainResult = await executeUnlistNFTTransaction({
+        nftObjectId: nft.sui_object_id || nft.id,
+        sellerAddress: wallet.address
       });
-      console.log('Unlist result:', result);
-      
+
+      if (!blockchainResult.success) {
+        throw new Error(blockchainResult.error || 'Blockchain transaction failed');
+      }
+
+      console.log('Blockchain transaction successful:', blockchainResult.txId);
+
+      // Step 2: Confirm unlisting in database (following the same pattern)
+      console.log('Confirming unlisting with blockchain data...');
+      await confirmUnlisting(
+        nft.id, // In production, this would be the database listing ID
+        blockchainResult.txId,
+        0 // gas_fee
+      );
+
+      console.log('Unlisting confirmed successfully');
+
       // Force refetch the data immediately
       await refetch();
-      
-      // Also invalidate the cache to ensure fresh data
-      setTimeout(() => {
-        refetch();
-      }, 1000);
-      
+
       // The mutation will automatically invalidate queries and trigger refetch
       // The NFT's is_listed status will be updated to false in the database
       // The NFT should now appear in the "Unlisted" filter instead of "Listed"
     } catch (error) {
       console.error('Failed to unlist NFT:', error);
       // You might want to show a toast notification here
+    } finally {
+      setIsUnlisting(false);
     }
   };
 
   const getStatusBadge = (nft: NFT) => {
-    if (nft.is_fraud || nft.confidence_score > 0.7) {
+    // First check fraud status - this takes priority
+    if (nft.is_fraud) {
       return <Badge variant="destructive" className="text-xs">Flagged</Badge>;
     }
+    
+    // Then check if it's listed (business status)
     if (nft.is_listed === true) {
       return <Badge variant="default" className="text-xs">Listed</Badge>;
     }
+    
+    // Finally check AI verification status for unlisted NFTs
+    if (typeof nft.confidence_score === 'number' && nft.confidence_score >= 0.8) {
+      return <Badge variant="outline" className="text-xs text-green-600 border-green-600">Verified</Badge>;
+    } else if (typeof nft.confidence_score === 'number' && nft.confidence_score > 0) {
+      return <Badge variant="outline" className="text-xs text-yellow-600 border-yellow-600">Under Review</Badge>;
+    }
+    
     return <Badge variant="secondary" className="text-xs">Available</Badge>;
   };
 
@@ -287,7 +357,7 @@ export function ListingManager() {
             { label: 'All', value: 'all' as const, count: nfts.length },
             { label: 'Listed', value: 'listed' as const, count: nfts.filter(n => n.is_listed).length },
             { label: 'Unlisted', value: 'unlisted' as const, count: nfts.filter(n => !n.is_listed).length },
-            { label: 'Flagged', value: 'flagged' as const, count: nfts.filter(n => n.is_fraud || n.confidence_score > 0.7).length }
+            { label: 'Flagged', value: 'flagged' as const, count: nfts.filter(n => n.is_fraud === true).length }
           ].map((filter) => (
             <Button
               key={filter.value}
@@ -362,7 +432,7 @@ export function ListingManager() {
                 <div className="absolute top-2 right-2">
                   {getStatusBadge(nft)}
                 </div>
-                {(nft.is_fraud || nft.confidence_score > 0.7) && (
+                {nft.is_fraud && (
                   <div className="absolute top-2 left-2">
                     <Badge variant="destructive" className="text-xs">
                       <AlertTriangle className="w-3 h-3 mr-1" />
@@ -416,19 +486,19 @@ export function ListingManager() {
                     </Button>
                   )}
                   {nft.is_listed === true && (
-                    <Button 
-                      variant="secondary" 
-                      size="sm" 
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       className="flex-1"
                       onClick={() => handleUnlistNFT(nft)}
-                      disabled={unlistNFTMutation.isPending}
+                      disabled={isUnlisting}
                     >
-                      {unlistNFTMutation.isPending ? (
+                      {isUnlisting ? (
                         <Loader2 className="w-4 h-4 mr-1 animate-spin" />
                       ) : (
                         <Trash2 className="w-4 h-4 mr-1" />
                       )}
-                      {unlistNFTMutation.isPending ? 'Unlisting...' : 'Unlist'}
+                      {isUnlisting ? 'Unlisting...' : 'Unlist'}
                     </Button>
                   )}
                 </div>

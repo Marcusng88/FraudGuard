@@ -29,9 +29,11 @@ try:
     from agent.sui_client import sui_client
     from agent.supabase_client import supabase_client
     from agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
+    from agent.chat_bot import get_nft_market_analysis, validate_environment
     from api.marketplace import router as marketplace_router
     from api.nft import router as nft_router
     from api.listings import router as listings_router
+    from api.transactions import router as transactions_router
     from database.connection import create_tables
 except ImportError:
     # Fallback to absolute imports (when running from project root)
@@ -40,9 +42,11 @@ except ImportError:
     from backend.agent.sui_client import sui_client
     from backend.agent.supabase_client import supabase_client
     from backend.agent.fraud_detector import analyze_nft_for_fraud, initialize_fraud_detector, NFTData
+    from backend.agent.chat_bot import get_nft_market_analysis, validate_environment
     from backend.api.marketplace import router as marketplace_router
     from backend.api.nft import router as nft_router
     from backend.api.listings import router as listings_router
+    from backend.api.transactions import router as transactions_router
     from backend.database.connection import create_tables
 
 # Configure logging
@@ -62,6 +66,21 @@ class HealthResponse(BaseModel):
     ai_configured: bool
     fraud_detection_active: bool
     listing_sync_active: bool
+
+
+# Chat bot models
+class ChatRequest(BaseModel):
+    """Chat request model"""
+    message: str
+
+
+class ChatResponse(BaseModel):
+    """Chat response model"""
+    query: str
+    summary: str
+    images: List[str]
+    success: bool
+    error: Optional[str] = None
 
 
 # Background tasks
@@ -133,6 +152,7 @@ if FastAPI:
     app.include_router(marketplace_router)
     app.include_router(nft_router)
     app.include_router(listings_router)
+    app.include_router(transactions_router)
     
 else:
     app = None
@@ -168,6 +188,41 @@ if app:
         except Exception as e:
             logger.error(f"Health check failed: {e}")
             raise HTTPException(status_code=500, detail="Health check failed")
+
+    @app.post("/api/chat", response_model=ChatResponse)
+    async def chat_with_bot(request: ChatRequest):
+        """Chat with the NFT market analysis bot"""
+        try:
+            # Validate environment first
+            is_valid, error_msg = validate_environment()
+            if not is_valid:
+                logger.warning(f"Chat bot environment validation failed: {error_msg}")
+                return ChatResponse(
+                    query=request.message,
+                    summary="I'm sorry, but I'm currently unable to provide market analysis due to configuration issues. Please try again later.",
+                    images=[],
+                    success=False,
+                    error=error_msg
+                )
+
+            # Get market analysis
+            result = get_nft_market_analysis(request.message)
+
+            return ChatResponse(
+                query=result["query"],
+                summary=result["summary"],
+                images=result["images"],
+                success=True
+            )
+        except Exception as e:
+            logger.error(f"Chat bot error: {e}")
+            return ChatResponse(
+                query=request.message,
+                summary="I'm sorry, but I encountered an error while processing your request. Please try again later.",
+                images=[],
+                success=False,
+                error=str(e)
+            )
 
 
 # Development server

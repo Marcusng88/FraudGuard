@@ -15,7 +15,7 @@ module fraudguard::fraudguard_nft {
     const EInvalidNFTId: u64 = 2;
 
     // ===== NFT Struct =====
-    struct FraudGuardNFT has key, store {
+    public struct FraudGuardNFT has key, store {
         id: UID,
         name: String,
         description: String,
@@ -28,7 +28,7 @@ module fraudguard::fraudguard_nft {
     }
 
     // ===== Fraud Flag Struct =====
-    struct FraudFlag has key, store {
+    public struct FraudFlag has key, store {
         id: UID,
         nft_id: object::ID,
         flag_type: String,
@@ -73,32 +73,35 @@ module fraudguard::fraudguard_nft {
         timestamp: u64,
     }
 
+    // ===== One-Time Witness =====
+    public struct FRAUDGUARD_NFT has drop {}
+
     // ===== Global State =====
-    struct FraudGuardRegistry has key {
+    public struct FraudGuardRegistry has key {
         id: UID,
         nfts: Table<object::ID, FraudGuardNFT>,
         fraud_flags: Table<object::ID, FraudFlag>,
-        clock: Clock,
     }
 
     // ===== Initialization =====
-    fun init(witness: fraudguard_nft, ctx: &mut TxContext) {
-        let (registry, clock) = fraudguard_nft::create_registry(witness, ctx);
-        transfer::public_transfer(registry, tx_context::sender(ctx));
-        transfer::public_transfer(clock, tx_context::sender(ctx));
-    }
-
-    public fun create_registry(
-        _witness: fraudguard_nft,
-        ctx: &mut TxContext
-    ): (FraudGuardRegistry, Clock) {
+    fun init(witness: FRAUDGUARD_NFT, ctx: &mut TxContext) {
         let registry = FraudGuardRegistry {
             id: object::new(ctx),
             nfts: table::new(ctx),
             fraud_flags: table::new(ctx),
-            clock: clock::create_for_testing(ctx),
         };
-        (registry, registry.clock)
+        transfer::share_object(registry);
+    }
+
+    public fun create_registry(
+        _witness: FRAUDGUARD_NFT,
+        ctx: &mut TxContext
+    ): FraudGuardRegistry {
+        FraudGuardRegistry {
+            id: object::new(ctx),
+            nfts: table::new(ctx),
+            fraud_flags: table::new(ctx),
+        }
     }
 
     // ===== NFT Minting =====
@@ -198,6 +201,12 @@ module fraudguard::fraudguard_nft {
     }
 
     // ===== View Functions =====
+    
+    /// Get NFT ID
+    public fun get_nft_id(nft: &FraudGuardNFT): object::ID {
+        object::id(nft)
+    }
+
     /// Get NFT details
     public fun get_nft_details(nft: &FraudGuardNFT): (object::ID, String, String, String, address, u64, u64, bool, String) {
         (

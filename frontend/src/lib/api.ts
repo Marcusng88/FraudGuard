@@ -3,7 +3,7 @@
  * Handles all HTTP requests to the backend API
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
 export interface User {
   wallet_address: string;
@@ -36,6 +36,7 @@ export interface NFT {
   listing_price?: number;
   last_listed_at?: string;
   listing_status?: string;
+  listing_id?: string; // Blockchain listing object ID for buy transactions
 }
 
 // Analysis Details Interface
@@ -96,6 +97,10 @@ export interface MarketplaceStats {
   total_volume: number;
   average_price: number;
   fraud_detection_rate: number;
+  flagged_nfts?: number;
+  threats_blocked?: number;
+  detection_accuracy?: number;
+  analyzed_nfts?: number;
 }
 
 export interface NFTCreationRequest {
@@ -142,6 +147,7 @@ export interface MarketplaceResponse {
 export interface NFTDetailResponse {
   nft: NFT;
   owner: User;
+  listing?: Listing; // Include listing information for listed NFTs
 }
 
 // API Functions
@@ -178,6 +184,102 @@ export async function confirmNFTMint(nftId: string, suiObjectId: string): Promis
   return response.json();
 }
 
+export interface ConfirmResponse {
+  success: boolean;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
+// Listing confirmation functions (following NFT minting pattern)
+export async function confirmListing(listingId: string, blockchainTxId: string, blockchainListingId?: string, gasFee?: number): Promise<ConfirmResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}/confirm-listing`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      listing_id: listingId,
+      blockchain_tx_id: blockchainTxId,
+      blockchain_listing_id: blockchainListingId,
+      gas_fee: gasFee
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to confirm listing');
+  }
+
+  return response.json();
+}
+
+export async function confirmUnlisting(listingId: string, blockchainTxId: string, gasFee?: number): Promise<ConfirmResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}/confirm-unlisting`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      listing_id: listingId,
+      blockchain_tx_id: blockchainTxId,
+      gas_fee: gasFee
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to confirm unlisting');
+  }
+
+  return response.json();
+}
+
+export async function confirmEditListing(listingId: string, newPrice: number, blockchainTxId: string, gasFee?: number): Promise<ConfirmResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/${listingId}/confirm-edit-listing`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      listing_id: listingId,
+      new_price: newPrice,
+      blockchain_tx_id: blockchainTxId,
+      gas_fee: gasFee
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to confirm edit listing');
+  }
+
+  return response.json();
+}
+
+// Blockchain-first listing creation
+export async function createListingWithBlockchain(data: {
+  nft_id: string;
+  price: number;
+  blockchain_listing_id: string;
+  blockchain_tx_id: string;
+  gas_fee?: number;
+}): Promise<ConfirmResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/create-with-blockchain`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(data),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create listing with blockchain data');
+  }
+
+  return response.json();
+}
+
 export async function getMarketplaceNFTs(page: number = 1, limit: number = 20): Promise<MarketplaceResponse> {
   const response = await fetch(`${API_BASE_URL}/api/marketplace/nfts?page=${page}&limit=${limit}`);
 
@@ -195,6 +297,64 @@ export async function getMarketplaceStats(): Promise<MarketplaceStats> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to fetch marketplace stats');
+  }
+
+  return response.json();
+}
+
+export async function getFraudDetectionStats(): Promise<{
+  total_analyzed: number;
+  total_flagged: number;
+  detection_accuracy: number;
+  protection_rate: number;
+  recent_threats_30d: number;
+  recent_threats_7d: number;
+  ai_uptime: number;
+  high_confidence_detections: number;
+  threat_prevention_score: number;
+  value_protected: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/fraud-stats`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch fraud detection stats');
+  }
+
+  return response.json();
+}
+
+export async function getRecentFraudAlerts(limit: number = 3): Promise<{
+  alerts: Array<{
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    title: string;
+    description: string;
+    timestamp: string;
+    nft_id: string;
+    confidence_score: number;
+    nft_title: string;
+  }>;
+  total: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/recent-alerts?limit=${limit}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch recent fraud alerts');
+  }
+
+  return response.json();
+}
+
+export async function getRecentNFTsWithAnalysis(limit: number = 3): Promise<{
+  nfts: NFT[];
+  total: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/recent-nfts-with-analysis?limit=${limit}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch recent NFTs with analysis');
   }
 
   return response.json();
@@ -267,6 +427,7 @@ export interface Listing {
   created_at: string;
   updated_at?: string;
   metadata?: Record<string, unknown>;
+  listing_metadata?: Record<string, unknown>; // Added to match backend response
   nft_title?: string;
   nft_image_url?: string;
   seller_username?: string;
@@ -396,12 +557,55 @@ export async function unlistNFT(nftId: string): Promise<{ message: string }> {
   const response = await fetch(`${API_BASE_URL}/api/nft/${nftId}/unlist`, {
     method: 'PUT',
   });
-  
+
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to unlist NFT');
   }
-  
+
+  return response.json();
+}
+
+export async function notifyNFTListed(notification: {
+  nft_id: string;
+  listing_id?: string;
+  transaction_digest: string;
+  price: number;
+}): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/notify-listed`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(notification),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to notify NFT listing');
+  }
+
+  return response.json();
+}
+
+export async function notifyNFTUnlisted(notification: {
+  nft_id: string;
+  listing_id?: string;
+  transaction_digest: string;
+}): Promise<{ success: boolean; message: string }> {
+  const response = await fetch(`${API_BASE_URL}/api/nft/notify-unlisted`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(notification),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to notify NFT unlisting');
+  }
+
   return response.json();
 }
 
@@ -466,6 +670,157 @@ export async function getMarketplaceAnalytics(timePeriod: string = '24h'): Promi
   return response.json();
 }
 
+// Blockchain Transaction Interfaces
+export interface BlockchainTransactionCreate {
+  blockchain_tx_id: string;
+  listing_id: string;
+  nft_blockchain_id: string;
+  seller_wallet_address: string;
+  buyer_wallet_address: string;
+  price: number;
+  marketplace_fee: number;
+  seller_amount: number;
+  gas_fee?: number;
+  transaction_type?: string;
+}
+
+export interface BlockchainTransactionResponse {
+  blockchain_tx_id: string;
+  status: string;
+  price: number;
+  marketplace_fee: number;
+  seller_amount: number;
+  gas_fee?: number;
+  created_at: string;
+  transaction_type: string;
+}
+
+export interface TransactionHistory {
+  id: string;
+  blockchain_tx_id: string;
+  listing_id: string;
+  nft_blockchain_id: string;
+  seller_wallet_address: string;
+  buyer_wallet_address: string;
+  price: number;
+  marketplace_fee: number;
+  seller_amount: number;
+  gas_fee?: number;
+  transaction_type: string;
+  status: string;
+  created_at: string;
+}
+
+// Blockchain transaction API functions
+export async function recordBlockchainTransaction(transaction: BlockchainTransactionCreate): Promise<BlockchainTransactionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/transactions/blockchain`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(transaction),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to record blockchain transaction');
+  }
+
+  return response.json();
+}
+
+export async function getTransactionStatus(txId: string): Promise<BlockchainTransactionResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/transactions/blockchain/${txId}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get transaction status');
+  }
+
+  return response.json();
+}
+
+// Check if an NFT is currently listed for sale in the database
+export async function checkNFTListingStatus(nftId: string): Promise<{
+  is_listed: boolean;
+  listing?: Listing;
+  price?: number;
+  seller_address?: string;
+}> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/listings/nft/${nftId}/active`);
+
+    if (!response.ok) {
+      // If 404, it means no active listing exists
+      if (response.status === 404) {
+        return {
+          is_listed: false,
+          listing: undefined,
+          price: undefined,
+          seller_address: undefined
+        };
+      }
+      
+      const error = await response.json();
+      throw new Error(error.detail || 'Failed to check NFT listing status');
+    }
+
+    const listingData = await response.json();
+    
+    // Transform the response to match the expected format
+    return {
+      is_listed: true,
+      listing: {
+        id: listingData.id,
+        nft_id: listingData.nft_id,
+        seller_id: listingData.seller_wallet_address, // Map seller_wallet_address to seller_id
+        price: listingData.price,
+        status: listingData.status,
+        listing_metadata: listingData.listing_metadata,
+        created_at: listingData.created_at,
+        updated_at: listingData.updated_at,
+      },
+      price: listingData.price,
+      seller_address: listingData.seller_wallet_address
+    };
+  } catch (error) {
+    // If it's a network error or parsing error, handle gracefully
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error('Network error: Unable to connect to the server');
+    }
+    throw error;
+  }
+}
+
+export async function getUserTransactions(
+  walletAddress: string,
+  options: {
+    transaction_type?: string;
+    limit?: number;
+    offset?: number;
+  } = {}
+): Promise<{
+  transactions: TransactionHistory[];
+  total: number;
+  limit: number;
+  offset: number;
+}> {
+  const params = new URLSearchParams();
+  
+  if (options.transaction_type) params.append('transaction_type', options.transaction_type);
+  if (options.limit) params.append('limit', options.limit.toString());
+  if (options.offset) params.append('offset', options.offset.toString());
+
+  const response = await fetch(`${API_BASE_URL}/api/transactions/user/${walletAddress}?${params.toString()}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get user transactions');
+  }
+
+  return response.json();
+}
+
 export async function searchListings(searchQuery: string, filters: {
   category?: string;
   min_price?: number;
@@ -488,5 +843,57 @@ export async function searchListings(searchQuery: string, filters: {
     throw new Error(error.detail || 'Failed to search listings');
   }
   
+  return response.json();
+}
+
+// Profile Management Interfaces
+export interface UserProfile {
+  id: string;
+  wallet_address: string;
+  username?: string;
+  bio?: string;
+  avatar_url?: string;
+  email?: string;
+  reputation_score: number;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface UpdateUserProfileRequest {
+  username?: string;
+  bio?: string;
+  avatar_url?: string;
+  email?: string;
+}
+
+// Profile Management API Functions
+export async function getUserProfile(walletAddress: string): Promise<UserProfile> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/user/${walletAddress}/profile`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to get user profile');
+  }
+
+  return response.json();
+}
+
+export async function updateUserProfile(
+  walletAddress: string,
+  profileData: UpdateUserProfileRequest
+): Promise<UserProfile> {
+  const response = await fetch(`${API_BASE_URL}/api/listings/user/${walletAddress}/profile`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(profileData),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to update user profile');
+  }
+
   return response.json();
 }

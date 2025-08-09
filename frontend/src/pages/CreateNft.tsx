@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Label } from '@/components/ui/label';
-import { Upload, Image, Shield, Zap, AlertTriangle, CheckCircle, ExternalLink } from 'lucide-react';
+import { Upload, Image, Shield, Zap, AlertTriangle, CheckCircle, ExternalLink, Plus } from 'lucide-react';
 import { useCurrentAccount, useSuiClient, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { Transaction } from '@mysten/sui/transactions';
 import { toast } from '@/hooks/use-toast';
@@ -523,17 +523,21 @@ export default function CreateNft() {
       {/* Navigation */}
       <CyberNavigation />
       
-      {/* Hero Section */}
-      <section className="relative py-16 overflow-hidden">
-        {/* Animated background */}
-        <div className="absolute inset-0 bg-gradient-to-br from-background via-primary/5 to-secondary/10" />
+      {/* Main Content Container with Seamless Gradient Background */}
+      <div className="relative z-10">
+        {/* Seamless gradient background that covers all sections */}
+        <div className="absolute inset-0 bg-gradient-to-b from-background/20 via-background/60 to-background/95" />
+        <div className="absolute inset-0 bg-gradient-to-br from-blue-600/8 via-blue-500/15 to-blue-400/25" />
+        <div className="absolute inset-0 bg-gradient-to-bl from-indigo-500/5 via-blue-600/12 to-sky-500/20" />
         
-        {/* Floating orbs */}
+        {/* Multiple floating orbs with different animations */}
         <div className="absolute top-20 left-20 w-32 h-32 bg-primary/20 rounded-full blur-3xl animate-float" />
         <div className="absolute bottom-20 right-20 w-40 h-40 bg-secondary/20 rounded-full blur-3xl animate-float" style={{ animationDelay: '1s' }} />
         <div className="absolute top-1/2 left-1/2 w-24 h-24 bg-accent/30 rounded-full blur-2xl animate-pulse-glow" />
+        <div className="absolute top-32 right-1/3 w-20 h-20 bg-warning/20 rounded-full blur-2xl animate-float" style={{ animationDelay: '2s' }} />
+        <div className="absolute bottom-32 left-1/3 w-28 h-28 bg-success/15 rounded-full blur-3xl animate-float" style={{ animationDelay: '0.5s' }} />
 
-        {/* Grid pattern overlay */}
+        {/* Enhanced grid pattern overlay */}
         <div 
           className="absolute inset-0 opacity-10"
           style={{
@@ -541,281 +545,323 @@ export default function CreateNft() {
               linear-gradient(hsl(var(--border)) 1px, transparent 1px),
               linear-gradient(90deg, hsl(var(--border)) 1px, transparent 1px)
             `,
-            backgroundSize: '50px 50px'
+            backgroundSize: '60px 60px',
+            maskImage: 'radial-gradient(ellipse at center, black 50%, transparent 90%)'
           }}
         />
 
-        <div className="relative z-10 container mx-auto px-6 text-center">
-          <div className="max-w-4xl mx-auto space-y-8">
-            {/* Wallet Connection */}
-            <div className="flex justify-center mb-6">
-              <WalletConnection />
+        {/* Matrix-style binary rain effect */}
+        <div className="absolute inset-0 opacity-5">
+          {[...Array(20)].map((_, i) => (
+            <div
+              key={i}
+              className="absolute text-primary text-xs font-mono animate-matrix-rain"
+              style={{
+                left: `${(i * 5) % 100}%`,
+                animationDelay: `${i * 0.5}s`,
+                animationDuration: `${3 + (i % 3)}s`
+              }}
+            >
+              {Math.random().toString(2).substr(2, 8)}
             </div>
+          ))}
+        </div>
 
-            {/* Main headline */}
-            <div className="space-y-4">
-              <h1 className="text-4xl md:text-6xl font-bold leading-tight">
-                Create
-                <br />
-                <span className="text-primary" style={{ textShadow: '0 0 5px hsl(var(--primary))' }}>
-                  Your NFT
-                </span>
-              </h1>
-              
-              <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-                Upload your digital artwork with AI-powered fraud protection and verification on Sui blockchain.
-              </p>
-            </div>
+        {/* Hero Section */}
+        <section className="relative py-16 overflow-hidden">
+          <div className="relative z-10 container mx-auto px-6 text-center">
+            <div className="max-w-4xl mx-auto space-y-8">
+              {/* Wallet Connection */}
+              <div className="flex justify-center mb-6">
+                <WalletConnection />
+              </div>
 
-            {/* Feature highlights */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
-              {[
-                {
-                  icon: Shield,
-                  title: 'AI Protection',
-                  description: 'Automatic fraud detection and verification'
-                },
-                {
-                  icon: Zap,
-                  title: 'Instant Minting',
-                  description: 'Fast NFT creation on Sui blockchain'
-                },
-                {
-                  icon: CheckCircle,
-                  title: 'IPFS Storage',
-                  description: 'Decentralized storage via Pinata'
-                }
-              ].map((feature, index) => {
-                const Icon = feature.icon;
-                return (
-                  <div 
-                    key={feature.title}
-                    className="glass-panel p-6 hover-glow group"
-                    style={{ animationDelay: `${index * 200}ms` }}
-                  >
-                    <div className="flex flex-col items-center text-center space-y-4">
-                      <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg group-hover:shadow-cyber transition-all duration-300">
-                        <Icon className="w-6 h-6 text-primary" />
+              {/* Main headline */}
+              <div className="space-y-4">
+                <h1 className="text-4xl md:text-6xl font-bold leading-tight">
+                  Create
+                  <br />
+                  <span className="text-primary neon-text" style={{ textShadow: '0 0 5px hsl(var(--primary))' }}>
+                    Your NFT
+                  </span>
+                </h1>
+                
+                <p className="text-lg text-muted-foreground max-w-2xl mx-auto leading-relaxed">
+                  Upload your digital artwork with AI-powered fraud protection and verification on Sui blockchain.
+                </p>
+              </div>
+
+              {/* Feature highlights */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12">
+                {[
+                  {
+                    icon: Shield,
+                    title: 'AI Protection',
+                    description: 'Automatic fraud detection and verification',
+                    gradient: 'from-primary/20 to-primary/5'
+                  },
+                  {
+                    icon: Zap,
+                    title: 'Instant Minting',
+                    description: 'Fast NFT creation on Sui blockchain',
+                    gradient: 'from-accent/20 to-accent/5'
+                  },
+                  {
+                    icon: CheckCircle,
+                    title: 'IPFS Storage',
+                    description: 'Decentralized storage via Pinata',
+                    gradient: 'from-success/20 to-success/5'
+                  }
+                ].map((feature, index) => {
+                  const Icon = feature.icon;
+                  return (
+                    <div 
+                      key={feature.title}
+                      className="glass-panel p-6 hover-glow group relative overflow-hidden"
+                      style={{ animationDelay: `${index * 200}ms` }}
+                    >
+                      {/* Background gradient */}
+                      <div className={`absolute inset-0 bg-gradient-to-br ${feature.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-300`} />
+                      
+                      <div className="relative z-10 flex flex-col items-center text-center space-y-4">
+                        <div className="p-3 bg-primary/10 border border-primary/30 rounded-lg group-hover:shadow-cyber transition-all duration-300">
+                          <Icon className="w-6 h-6 text-primary" />
+                        </div>
+                        <div className="space-y-2">
+                          <h3 className="font-semibold text-foreground">{feature.title}</h3>
+                          <p className="text-sm text-muted-foreground">{feature.description}</p>
+                        </div>
                       </div>
-                      <div className="space-y-2">
-                        <h3 className="font-semibold text-foreground">{feature.title}</h3>
-                        <p className="text-sm text-muted-foreground">{feature.description}</p>
+
+                      {/* Scan line effect on hover */}
+                      <div className="absolute inset-0 overflow-hidden opacity-0 group-hover:opacity-100 transition-opacity">
+                        <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/20 to-transparent w-full h-1 animate-scan top-1/2" />
                       </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
           </div>
-        </div>
-      </section>
+        </section>
 
-      {/* Create NFT Form */}
-      <div className="container mx-auto px-6 space-y-8">
-        <section className="glass-panel p-8">
-          <div className="max-w-4xl mx-auto">
-            <div className="flex items-center gap-3 mb-8">
-              <h2 className="text-2xl font-bold text-foreground">Create New NFT</h2>
-              <div className="h-px bg-gradient-to-r from-primary/50 to-transparent flex-1" />
-            </div>
+        {/* Create NFT Form */}
+        <div className="w-full relative z-10">
+          <div className="container mx-auto px-6 space-y-8 pb-16">
+            <section className="glass-panel p-8">
+              <div className="max-w-4xl mx-auto">
+                <div className="flex items-center gap-4 mb-8">
+                  <div className="relative p-3 bg-gradient-to-br from-violet-500/20 via-indigo-500/20 to-purple-500/20 rounded-xl border border-violet-400/40 shadow-lg">
+                    <div className="absolute inset-0 bg-gradient-to-br from-violet-400/10 to-indigo-400/10 rounded-xl blur-sm"></div>
+                    <Plus className="relative w-6 h-6 text-violet-400 drop-shadow-lg" />
+                  </div>
+                  <h2 className="text-3xl font-bold bg-gradient-to-r from-violet-400 via-indigo-400 to-purple-400 bg-clip-text text-transparent drop-shadow-2xl">
+                    🎨 Create New NFT
+                  </h2>
+                  <div className="h-px bg-gradient-to-r from-primary/50 to-transparent flex-1" />
+                </div>
 
-            <form onSubmit={handleSubmit} className="space-y-8">
-              {/* Image Upload */}
-              <div className="space-y-4">
-                <Label className="text-foreground">NFT Image</Label>
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* Upload Area */}
-                  <Card className="p-6 border-dashed border-border/50 hover:border-primary/50 transition-colors">
-                    <div className="text-center space-y-4">
-                      <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
-                        <Upload className="w-8 h-8 text-primary" />
-                      </div>
-                      <div>
-                        <p className="text-foreground font-medium">Upload your artwork</p>
-                        <p className="text-sm text-muted-foreground">PNG, JPG, GIF up to 10MB</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="cyber"
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={isProcessing}
-                      >
-                        <Image className="w-4 h-4" />
-                        Choose File
-                      </Button>
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        accept="image/*"
-                        onChange={handleImageUpload}
-                        className="hidden"
-                      />
-                    </div>
-                  </Card>
+                <form onSubmit={handleSubmit} className="space-y-8">
+                  {/* Image Upload */}
+                  <div className="space-y-4">
+                    <Label className="text-foreground font-semibold">NFT Image</Label>
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      {/* Upload Area */}
+                      <Card className="glass-panel p-6 border-dashed border-border/50 hover:border-primary/50 transition-colors hover-glow">
+                        <div className="text-center space-y-4">
+                          <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center border border-primary/30">
+                            <Upload className="w-8 h-8 text-primary" />
+                          </div>
+                          <div>
+                            <p className="text-foreground font-medium">Upload your artwork</p>
+                            <p className="text-sm text-muted-foreground">PNG, JPG, GIF up to 10MB</p>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="cyber"
+                            onClick={() => fileInputRef.current?.click()}
+                            disabled={isProcessing}
+                            className="hover:scale-105 transition-transform"
+                          >
+                            <Image className="w-4 h-4" />
+                            Choose File
+                          </Button>
+                          <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageUpload}
+                            className="hidden"
+                          />
+                        </div>
+                      </Card>
 
-                  {/* Preview */}
-                  {formData.preview && (
-                    <Card className="p-4">
-                      <div className="space-y-4">
-                        <img
-                          src={formData.preview}
-                          alt="Preview"
-                          className="w-full h-48 object-cover rounded-lg"
-                        />
-                        
-                        {/* Analysis Result */}
-                        {analysisResult && (
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2">
-                              {analysisResult.isSafe ? (
-                                <CheckCircle className="w-5 h-5 text-success" />
-                              ) : (
-                                <AlertTriangle className="w-5 h-5 text-warning" />
-                              )}
-                              <span className="text-sm font-medium">
-                                {analysisResult.isSafe ? 'Verified Safe' : 'Needs Review'}
-                              </span>
-                              <Badge variant="outline" className="text-xs">
-                                {analysisResult.confidence}% confidence
-                              </Badge>
-                            </div>
+                      {/* Preview */}
+                      {formData.preview && (
+                        <Card className="glass-panel p-4 hover-glow">
+                          <div className="space-y-4">
+                            <img
+                              src={formData.preview}
+                              alt="Preview"
+                              className="w-full h-48 object-cover rounded-lg border border-border/30"
+                            />
                             
-                            {analysisResult.warnings.length > 0 && (
-                              <div className="space-y-1">
-                                {analysisResult.warnings.map((warning, index) => (
-                                  <p key={index} className="text-xs text-warning">
-                                    ⚠️ {warning}
-                                  </p>
-                                ))}
+                            {/* Analysis Result */}
+                            {analysisResult && (
+                              <div className="space-y-2 glass-panel p-4">
+                                <div className="flex items-center gap-2">
+                                  {analysisResult.isSafe ? (
+                                    <CheckCircle className="w-5 h-5 text-success" />
+                                  ) : (
+                                    <AlertTriangle className="w-5 h-5 text-warning" />
+                                  )}
+                                  <span className="text-sm font-medium">
+                                    {analysisResult.isSafe ? 'Verified Safe' : 'Needs Review'}
+                                  </span>
+                                  <Badge variant="outline" className="text-xs glass-panel">
+                                    {analysisResult.confidence}% confidence
+                                  </Badge>
+                                </div>
+                                
+                                {analysisResult.warnings.length > 0 && (
+                                  <div className="space-y-1">
+                                    {analysisResult.warnings.map((warning, index) => (
+                                      <p key={index} className="text-xs text-warning">
+                                        ⚠️ {warning}
+                                      </p>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
-                        )}
-                      </div>
-                    </Card>
-                  )}
-                </div>
-              </div>
-
-              {/* Form Fields */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-4">
-                  <Label htmlFor="title" className="text-foreground">Title *</Label>
-                  <Input
-                    id="title"
-                    value={formData.title}
-                    onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
-                    placeholder="Enter NFT title"
-                    className="bg-card/30 border-border/50"
-                    required
-                  />
-                </div>
-
-                <div className="space-y-4">
-                  <Label htmlFor="price" className="text-foreground">Price (SUI)</Label>
-                  <Input
-                    id="price"
-                    type="number"
-                    step="0.01"
-                    value={formData.price}
-                    onChange={(e) => setFormData(prev => ({ ...prev, price: e.target.value }))}
-                    placeholder="0.00"
-                    className="bg-card/30 border-border/50"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <Label htmlFor="category" className="text-foreground">Category</Label>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                  {categories.map((category) => (
-                    <Button
-                      key={category}
-                      type="button"
-                      variant={formData.category === category ? 'cyber' : 'glass'}
-                      size="sm"
-                      onClick={() => setFormData(prev => ({ ...prev, category }))}
-                      disabled={isProcessing}
-                    >
-                      {category}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <Label htmlFor="description" className="text-foreground">Description</Label>
-                <Textarea
-                  id="description"
-                  value={formData.description}
-                  onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="Describe your NFT..."
-                  rows={4}
-                  className="bg-card/30 border-border/50"
-                />
-              </div>
-
-              {/* Upload Progress */}
-              {isProcessing && (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>
-                      {uploadProgress < 25 && "Preparing..."}
-                      {uploadProgress >= 25 && uploadProgress < 50 && "Uploading to IPFS..."}
-                      {uploadProgress >= 50 && uploadProgress < 75 && "Creating transaction..."}
-                      {uploadProgress >= 75 && uploadProgress < 90 && "Minting NFT..."}
-                      {uploadProgress >= 90 && uploadProgress < 100 && "Finalizing..."}
-                      {uploadProgress >= 100 && "Complete!"}
-                    </span>
-                    <span>{uploadProgress}%</span>
+                        </Card>
+                      )}
+                    </div>
                   </div>
-                  <div className="w-full bg-muted rounded-full h-2">
-                    <div
-                      className="bg-primary h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${uploadProgress}%` }}
+
+                  {/* Form Fields */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <Label htmlFor="title" className="text-foreground font-semibold">Title *</Label>
+                      <Input
+                        id="title"
+                        value={formData.title}
+                        onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
+                        placeholder="Enter NFT title"
+                        className="glass-panel bg-card/30 border-border/50 backdrop-blur-md"
+                        required
+                      />
+                    </div>
+
+                    <div className="space-y-4">
+                      <Label htmlFor="price" className="text-foreground font-semibold">Price (SUI)</Label>
+                      <Input
+                        id="price"
+                        type="number"
+                        step="0.01"
+                        value={formData.price}
+                        onChange={(e) => setFormData(prev => ({ ...prev, price: e.target.value }))}
+                        placeholder="0.00"
+                        className="glass-panel bg-card/30 border-border/50 backdrop-blur-md"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <Label htmlFor="category" className="text-foreground font-semibold">Category</Label>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                      {categories.map((category) => (
+                        <Button
+                          key={category}
+                          type="button"
+                          variant={formData.category === category ? 'cyber' : 'glass'}
+                          size="sm"
+                          onClick={() => setFormData(prev => ({ ...prev, category }))}
+                          disabled={isProcessing}
+                          className="hover:scale-105 transition-transform"
+                        >
+                          {category}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-4">
+                    <Label htmlFor="description" className="text-foreground font-semibold">Description</Label>
+                    <Textarea
+                      id="description"
+                      value={formData.description}
+                      onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                      placeholder="Describe your NFT..."
+                      rows={4}
+                      className="glass-panel bg-card/30 border-border/50 backdrop-blur-md"
                     />
                   </div>
-                </div>
-              )}
 
-              {/* Transaction Result */}
-              {txDigest && (
-                <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
-                  <div className="flex items-center gap-2 text-success">
-                    <CheckCircle className="w-5 h-5" />
-                    <span className="font-medium">NFT Created Successfully!</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Transaction: {txDigest.slice(0, 20)}...
-                  </p>
-                </div>
-              )}
+                  {/* Upload Progress */}
+                  {isProcessing && (
+                    <div className="space-y-2 glass-panel p-4">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-foreground">
+                          {uploadProgress < 25 && "Preparing..."}
+                          {uploadProgress >= 25 && uploadProgress < 50 && "Uploading to IPFS..."}
+                          {uploadProgress >= 50 && uploadProgress < 75 && "Creating transaction..."}
+                          {uploadProgress >= 75 && uploadProgress < 90 && "Minting NFT..."}
+                          {uploadProgress >= 90 && uploadProgress < 100 && "Finalizing..."}
+                          {uploadProgress >= 100 && "Complete!"}
+                        </span>
+                        <span className="text-primary font-semibold">{uploadProgress}%</span>
+                      </div>
+                      <div className="w-full bg-muted/30 rounded-full h-2 overflow-hidden">
+                        <div
+                          className="bg-gradient-to-r from-primary to-secondary h-2 rounded-full transition-all duration-300 shadow-glow"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
 
-              {/* Submit Button */}
-              <Button
-                type="submit"
-                variant="cyber"
-                size="lg"
-                disabled={!formData.image || !formData.title.trim() || isProcessing || !account}
-                className="w-full"
-              >
-                {!account ? (
-                  'Connect Wallet to Mint'
-                ) : isProcessing ? (
-                  'Creating NFT...'
-                ) : (
-                  'Create NFT'
-                )}
-              </Button>
+                  {/* Transaction Result */}
+                  {txDigest && (
+                    <div className="glass-panel p-4 bg-success/10 border border-success/20">
+                      <div className="flex items-center gap-2 text-success">
+                        <CheckCircle className="w-5 h-5" />
+                        <span className="font-medium neon-text">NFT Created Successfully!</span>
+                      </div>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Transaction: {txDigest.slice(0, 20)}...
+                      </p>
+                    </div>
+                  )}
 
-              {!account && (
-                <p className="text-sm text-muted-foreground text-center">
-                  Connect your wallet to start minting NFTs
-                </p>
-              )}
-            </form>
+                  {/* Submit Button */}
+                  <Button
+                    type="submit"
+                    variant="cyber"
+                    size="lg"
+                    disabled={!formData.image || !formData.title.trim() || isProcessing || !account}
+                    className="w-full hover:scale-105 transition-all duration-300 neon-text shadow-glow"
+                  >
+                    {!account ? (
+                      'Connect Wallet to Mint'
+                    ) : isProcessing ? (
+                      'Creating NFT...'
+                    ) : (
+                      'Create NFT'
+                    )}
+                  </Button>
+
+                  {!account && (
+                    <p className="text-sm text-muted-foreground text-center glass-panel p-2 rounded">
+                      Connect your wallet to start minting NFTs
+                    </p>
+                  )}
+                </form>
+              </div>
+            </section>
           </div>
-        </section>
+        </div>
       </div>
     </div>
   );

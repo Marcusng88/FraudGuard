@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CyberNavigation } from '@/components/CyberNavigation';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
@@ -31,7 +31,27 @@ import {
   Star
 } from 'lucide-react';
 import { useNFTDetails, useNFTAnalysisDetails, useSimilarNFTs } from '@/hooks/useMarketplace';
-import { AnalysisDetails } from '@/lib/api';
+import { AnalysisDetails, recordBlockchainTransaction, checkNFTListingStatus } from '@/lib/api';
+import { useWallet } from '@/hooks/useWallet';
+import { useToast } from '@/hooks/use-toast';
+import { extractPurchaseEventData, getTransactionDetails, MARKETPLACE_OBJECT_ID } from '@/lib/blockchain-utils';
+import { 
+  createPurchaseNFTTransaction, 
+  getUserSUICoins, 
+  parseBlockchainError,
+  getBlockchainListingInfo,
+  type PurchaseParams,
+  MARKETPLACE_PACKAGE_ID
+} from '@/lib/blockchain/marketplace-utils';
+import { checkNFTInMarketplaceEscrow } from '@/lib/sui-utils';
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
+
+// Interface for fraud indicator details
+interface FraudIndicatorDetails {
+  detected: boolean;
+  confidence: number;
+  evidence?: string[];
+}
 
 const threatConfig = {
   safe: {
@@ -66,6 +86,14 @@ const NFTDetail = () => {
   const { data: nftData, isLoading, error } = useNFTDetails(nftId);
   const { data: analysisData, isLoading: analysisLoading } = useNFTAnalysisDetails(nftId);
   const { data: similarNFTsData, isLoading: similarLoading } = useSimilarNFTs(nftId);
+  
+  // Wallet and purchase functionality
+  const { wallet, connect, executeBuyTransaction, validateSufficientBalance, calculateMarketplaceFee, refreshBalance } = useWallet();
+  const { toast } = useToast();
+  const [isBuying, setIsBuying] = useState(false);
+  
+  // Initialize Sui client for blockchain state checks
+  const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
   if (isLoading || analysisLoading || similarLoading) {
     return (
@@ -105,9 +133,18 @@ const NFTDetail = () => {
   
   // Determine threat level based on fraud detection results
   // Use analysis data if available, otherwise fall back to NFT data
+  // Fixed logic: confidence_score represents AI's confidence in the analysis, not fraud probability
+  // When is_fraud = false and confidence >= 0.8, it means high confidence that it's NOT fraud (SAFE)
+  // When is_fraud = false and confidence < 0.8, it means low confidence in analysis (SUSPICIOUS)
+  // When is_fraud = true, it's flagged regardless of confidence (DANGER)
+  // When confidence_score is null/undefined, it means no analysis has been performed yet (WARNING)
   const isFraud = analysisData?.is_fraud ?? nft.is_fraud;
   const confidenceScore = analysisData?.confidence_score ?? nft.confidence_score;
-  const threatLevel = isFraud ? 'danger' : (confidenceScore >= 0.8 ? 'safe' : 'warning');
+  const threatLevel = isFraud 
+    ? 'danger' 
+    : (confidenceScore !== null && confidenceScore !== undefined && confidenceScore >= 0.8) 
+      ? 'safe' 
+      : 'warning';
   const config = threatConfig[threatLevel];
   const Icon = config.icon;
 
@@ -120,10 +157,10 @@ const NFTDetail = () => {
   };
 
   // Helper function to check if data is empty and return appropriate message
-  const isEmptyData = (value: any): boolean => {
+  const isEmptyData = (value: unknown): boolean => {
     if (value === null || value === undefined || value === '') return true;
     if (Array.isArray(value) && value.length === 0) return true;
-    if (typeof value === 'object' && Object.keys(value).length === 0) return true;
+    if (typeof value === 'object' && value !== null && Object.keys(value).length === 0) return true;
     return false;
   };
 
@@ -171,6 +208,147 @@ const NFTDetail = () => {
   };
 
   const analysisDetails = getAnalysisDetails();
+
+  // Purchase handler function with new marketplace smart contract integration
+  const handlePurchase = async () => {
+    if (!wallet?.address) {
+      // If wallet is not connected, prompt user to connect
+      connect();
+      return;
+    }
+
+    if (!nft.price || nft.price <= 0) {
+      toast({
+        title: "Purchase Error",
+        description: "NFT price is not available",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    if (nft.is_fraud) {
+      toast({
+        title: "Purchase Blocked",
+        description: "This NFT has been flagged as potentially fraudulent",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    // Check if buyer is trying to buy their own NFT
+    const currentOwner = owner?.wallet_address || nft.owner_wallet_address || nft.wallet_address;
+    if (currentOwner === wallet.address) {
+      toast({
+        title: "Purchase Error",
+        description: "You cannot purchase your own NFT",
+        variant: "destructive"
+      });
+      return;
+    }
+
+    setIsBuying(true);
+
+    try {
+      // Step 1: Check if NFT is actually in marketplace escrow (blockchain state check)
+      console.log('Checking if NFT is in marketplace escrow for purchase...');
+      const escrowCheck = await checkNFTInMarketplaceEscrow(suiClient, nft.sui_object_id);
+      console.log('Escrow check result for purchase:', escrowCheck);
+      
+      if (!escrowCheck.inEscrow) {
+        toast({
+          title: "Purchase Error", 
+          description: "This NFT is not currently listed for sale on the marketplace",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Step 2: Get listing info from database for price and seller details
+      console.log('Getting listing info from database...');
+      const listingStatus = await checkNFTListingStatus(nft.id);
+      
+      if (!listingStatus.is_listed || !listingStatus.listing) {
+        toast({
+          title: "Purchase Error",
+          description: "This NFT listing information is not available",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      const finalPrice = listingStatus.price || nft.price;
+      const finalSellerAddress = listingStatus.seller_address || currentOwner;
+
+      const totalCost = finalPrice + calculateMarketplaceFee(finalPrice);
+      console.log(`Total cost: ${totalCost} SUI (Price: ${finalPrice} + Fee: ${calculateMarketplaceFee(finalPrice)})`);
+      
+      const balanceCheck = await validateSufficientBalance(totalCost);
+      
+      if (!balanceCheck.sufficient) {
+        toast({
+          title: "Insufficient Balance",
+          description: `You need ${totalCost.toFixed(4)} SUI but only have ${balanceCheck.currentBalance.toFixed(4)} SUI`,
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Step 3: Execute blockchain purchase transaction
+      const buyParams = {
+        nftObjectId: nft.sui_object_id || nft.id,
+        listingId: listingStatus.listing?.id || nft.id,
+        price: finalPrice,
+        buyerAddress: wallet.address,
+      };
+
+      toast({
+        title: "Processing Purchase",
+        description: "Please confirm the transaction in your wallet",
+      });
+
+      console.log('Executing buy transaction...');
+      const txResult = await executeBuyTransaction(buyParams);
+      
+      if (!txResult.success) {
+        throw new Error(txResult.error || 'Transaction failed');
+      }
+
+      // Step 4: Record transaction in backend
+      await recordBlockchainTransaction({
+        blockchain_tx_id: txResult.txId,
+        listing_id: listingStatus.listing?.id || nft.id,
+        nft_blockchain_id: nft.sui_object_id || nft.id,
+        seller_wallet_address: finalSellerAddress,
+        buyer_wallet_address: wallet.address,
+        price: finalPrice,
+        marketplace_fee: calculateMarketplaceFee(finalPrice),
+        seller_amount: finalPrice - calculateMarketplaceFee(finalPrice),
+        gas_fee: txResult.gasUsed ? txResult.gasUsed / 1_000_000_000 : undefined,
+        transaction_type: 'purchase',
+      });
+
+      toast({
+        title: "Purchase Successful!",
+        description: `You have successfully purchased "${nft.title}" for ${finalPrice} SUI`,
+        variant: "default"
+      });
+
+      await refreshBalance();
+      setTimeout(() => navigate('/profile'), 2000);
+
+    } catch (error) {
+      console.error('Purchase failed:', error);
+      const errorMessage = parseBlockchainError(error);
+      
+      toast({
+        title: "Purchase Failed",
+        description: errorMessage,
+        variant: "destructive"
+      });
+    } finally {
+      setIsBuying(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -300,10 +478,18 @@ const NFTDetail = () => {
                 <Button 
                   className="flex-1" 
                   variant={threatLevel === 'danger' ? 'destructive' : 'default'}
-                  disabled={threatLevel === 'danger'}
+                  disabled={threatLevel === 'danger' || isBuying}
                   size="lg"
+                  onClick={threatLevel === 'danger' ? undefined : handlePurchase}
                 >
-                  {threatLevel === 'danger' ? 'Not Available' : `Buy for ${nft.price} SUI`}
+                  {isBuying ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Buying...
+                    </>
+                  ) : (
+                    threatLevel === 'danger' ? 'Not Available' : `Buy for ${nft.price} SUI`
+                  )}
                 </Button>
                 <Button variant="outline" size="icon">
                   <Heart className="w-4 h-4" />
@@ -342,7 +528,7 @@ const NFTDetail = () => {
                     <div className="flex-1">
                       <p className="font-medium text-foreground">Creator</p>
                       <p className="text-sm text-muted-foreground">
-                        {nft.wallet_address ? `${nft.wallet_address.slice(0, 8)}...${nft.wallet_address.slice(-6)}` : '-'}
+                        {nft.creator_wallet_address ? `${nft.creator_wallet_address.slice(0, 8)}...${nft.creator_wallet_address.slice(-6)}` : '-'}
                       </p>
                     </div>
                     <Badge variant="outline" className="text-xs bg-success/10 text-success border-success/30">
@@ -762,9 +948,10 @@ const NFTDetail = () => {
                         <div className="space-y-3 text-base">
                           {Object.entries(analysisDetails.image_analysis.fraud_indicators).map(([indicator, details]) => {
                             if (typeof details === 'object' && details !== null) {
-                              const detected = (details as any).detected;
-                              const confidence = (details as any).confidence;
-                              const evidence = (details as any).evidence;
+                              const fraudIndicator = details as FraudIndicatorDetails;
+                              const detected = fraudIndicator.detected;
+                              const confidence = fraudIndicator.confidence;
+                              const evidence = fraudIndicator.evidence;
                               
                               return (
                                 <div key={indicator} className="space-y-2">

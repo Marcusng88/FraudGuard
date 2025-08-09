@@ -1,26 +1,27 @@
-/// Marketplace Module for FraudGuard
-/// Handles NFT listing, buying, and marketplace operations
+/// Simple Marketplace Module for FraudGuard
+/// Handles NFT listing, unlisting, price updates, and purchases with escrow
 module fraudguard::marketplace {
     use sui::object::{Self, UID, ID};
-    use sui::tx_context;
+    use sui::tx_context::{Self, TxContext};
     use sui::coin::{Self, Coin};
     use sui::sui::SUI;
     use sui::event;
-    use sui::balance::{Self, Balance};
     use sui::transfer;
-    use std::string::{Self, String};
+    use sui::table::{Self, Table};
+    use sui::dynamic_field as df;
     use fraudguard::fraudguard_nft::{Self, FraudGuardNFT};
 
     // ===== Errors =====
-    const ENotOwner: u64 = 0;
+    const ENotOwner: u64 = 1;
     const EInsufficientPayment: u64 = 2;
-    const EListingNotActive: u64 = 3;
-    const EMarketplaceNotActive: u64 = 4;
+    const EListingNotFound: u64 = 3;
+    const EAlreadyListed: u64 = 4;
     const EInvalidPrice: u64 = 5;
-    const ENotMarketplaceOwner: u64 = 6;
-    const EInvalidMetadata: u64 = 7;
-    const EEmptyBatch: u64 = 8;
-    const EBatchSizeMismatch: u64 = 9;
+    const EMarketplaceNotActive: u64 = 6;
+
+    // ===== Constants =====
+    const MARKETPLACE_FEE_BASIS_POINTS: u64 = 25; // 0.25%
+    const FEE_DENOMINATOR: u64 = 10000;
 
     // ===== Structs =====
 
@@ -28,64 +29,42 @@ module fraudguard::marketplace {
     public struct Marketplace has key {
         id: UID,
         owner: address,
-        fee_percentage: u64, // Fee in basis points (e.g., 250 = 2.5%)
+        fee_recipient: address,
         total_volume: u64,
         total_sales: u64,
         is_active: bool,
-        balance: Balance<SUI>, // Marketplace earnings
+        // Store NFT listings in a table
+        listings: Table<ID, ListingInfo>,
     }
 
-    /// Individual NFT listing
-    public struct Listing has key, store {
-        id: UID,
-        nft_id: ID,
+    /// Listing information stored in the marketplace
+    public struct ListingInfo has store, drop {
         seller: address,
         price: u64,
-        listed_at: u64,
-        is_active: bool,
+        created_at: u64,
     }
 
     /// Marketplace admin capability
     public struct MarketplaceCap has key, store {
         id: UID,
-        marketplace_id: ID,
-    }
-
-    /// Enhanced listing metadata
-    public struct ListingMetadata has key, store {
-        id: UID,
-        listing_id: ID,
-        nft_id: ID,
-        title: string::String,
-        description: string::String,
-        category: string::String,
-        tags: vector<string::String>,
-        created_at: u64,
-        updated_at: u64,
     }
 
     // ===== Events =====
 
-    /// Emitted when marketplace is created
-    public struct MarketplaceCreated has copy, drop {
-        marketplace_id: ID,
-        owner: address,
-        fee_percentage: u64,
-    }
-
-    /// Emitted when NFT is listed
     public struct NFTListed has copy, drop {
-        listing_id: ID,
         nft_id: ID,
         seller: address,
         price: u64,
-        marketplace_id: ID,
         timestamp: u64,
     }
 
-    /// Emitted when NFT is purchased
+    public struct NFTUnlisted has copy, drop {
+        nft_id: ID,
+        seller: address,
+        timestamp: u64,
+    }
+
     public struct NFTPurchased has copy, drop {
-        listing_id: ID,
         nft_id: ID,
         seller: address,
         buyer: address,
@@ -94,17 +73,7 @@ module fraudguard::marketplace {
         timestamp: u64,
     }
 
-    /// Emitted when listing is cancelled
-    public struct ListingCancelled has copy, drop {
-        listing_id: ID,
-        nft_id: ID,
-        seller: address,
-        timestamp: u64,
-    }
-
-    /// Emitted when listing price is updated
-    public struct ListingPriceUpdated has copy, drop {
-        listing_id: ID,
+    public struct PriceUpdated has copy, drop {
         nft_id: ID,
         seller: address,
         old_price: u64,
@@ -112,501 +81,232 @@ module fraudguard::marketplace {
         timestamp: u64,
     }
 
-    /// Emitted when listing metadata is updated
-    public struct ListingMetadataUpdated has copy, drop {
-        listing_id: ID,
-        nft_id: ID,
-        seller: address,
-        title: string::String,
-        description: string::String,
-        category: string::String,
-        timestamp: u64,
-    }
+    // ===== Functions =====
 
-    // ===== Public Entry Functions =====
-
-    /// Create a new marketplace
-    public entry fun create_marketplace(
-        fee_percentage: u64,
-        ctx: &mut TxContext
-    ) {
-        let marketplace_id = object::new(ctx);
-        let marketplace_id_copy = object::uid_to_inner(&marketplace_id);
+    /// Initialize the marketplace
+    fun init(ctx: &mut TxContext) {
         let owner = tx_context::sender(ctx);
-
         let marketplace = Marketplace {
-            id: marketplace_id,
+            id: object::new(ctx),
             owner,
-            fee_percentage,
+            fee_recipient: owner,
             total_volume: 0,
             total_sales: 0,
             is_active: true,
-            balance: balance::zero(),
+            listings: table::new(ctx),
         };
 
         let cap = MarketplaceCap {
             id: object::new(ctx),
-            marketplace_id: marketplace_id_copy,
         };
-
-        // Emit event
-        event::emit(MarketplaceCreated {
-            marketplace_id: marketplace_id_copy,
-            owner,
-            fee_percentage,
-        });
 
         transfer::share_object(marketplace);
         transfer::transfer(cap, owner);
     }
 
-    /// List an NFT for sale (Enhanced with better validation and events)
+    /// List an NFT for sale (puts NFT in escrow)
     public entry fun list_nft(
         marketplace: &mut Marketplace,
         nft: FraudGuardNFT,
         price: u64,
-        title: vector<u8>,
-        description: vector<u8>,
-        category: vector<u8>,
-        tags: vector<vector<u8>>,
         ctx: &mut TxContext
     ) {
         assert!(marketplace.is_active, EMarketplaceNotActive);
         assert!(price > 0, EInvalidPrice);
-        assert!(!std::vector::is_empty(&title), EInvalidMetadata);
-        assert!(!std::vector::is_empty(&category), EInvalidMetadata);
 
         let seller = tx_context::sender(ctx);
-        let nft_id = fraudguard_nft::get_nft_id(&nft);
-        let listing_id = object::new(ctx);
-        let listing_id_copy = object::uid_to_inner(&listing_id);
-        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+        let nft_id = object::id(&nft);
 
-        let listing = Listing {
-            id: listing_id,
-            nft_id,
+        // Verify ownership by checking if sender is the current owner (NFT is in their possession)
+        // In Sui, if you can pass the NFT object, you own it
+
+        // Check if already listed
+        assert!(!table::contains(&marketplace.listings, nft_id), EAlreadyListed);
+
+        // Store listing info
+        let listing_info = ListingInfo {
             seller,
             price,
-            listed_at: timestamp,
-            is_active: true,
+            created_at: tx_context::epoch_timestamp_ms(ctx),
         };
+        table::add(&mut marketplace.listings, nft_id, listing_info);
 
-        // Create metadata
-        let mut metadata = ListingMetadata {
-            id: object::new(ctx),
-            listing_id: listing_id_copy,
-            nft_id,
-            title: string::utf8(title),
-            description: string::utf8(description),
-            category: string::utf8(category),
-            tags: std::vector::empty(),
-            created_at: timestamp,
-            updated_at: timestamp,
-        };
+        // Store NFT in marketplace as a dynamic field (escrow)
+        df::add(&mut marketplace.id, nft_id, nft);
 
-        // Add tags
-        let mut i = 0;
-        while (i < std::vector::length(&tags)) {
-            let tag = std::vector::borrow(&tags, i);
-            std::vector::push_back(&mut metadata.tags, string::utf8(*tag));
-            i = i + 1;
-        };
-
-        // Emit listing event
+        // Emit event
         event::emit(NFTListed {
-            listing_id: listing_id_copy,
             nft_id,
             seller,
             price,
-            marketplace_id: object::id(marketplace),
-            timestamp,
+            timestamp: tx_context::epoch_timestamp_ms(ctx),
         });
-
-        // Share objects
-        transfer::share_object(listing);
-        transfer::share_object(metadata);
-        
-        // Keep NFT with seller for now (simplified for hackathon)
-        transfer::public_transfer(nft, seller);
     }
 
-    /// Buy an NFT from a listing (Enhanced with better validation)
-    public entry fun buy_nft(
+    /// Unlist an NFT (returns from escrow to owner)
+    public entry fun unlist_nft(
         marketplace: &mut Marketplace,
-        listing: Listing,
-        mut payment: Coin<SUI>,
+        nft_id: ID,
+        ctx: &mut TxContext
+    ) {
+        let sender = tx_context::sender(ctx);
+
+        // Check if listed
+        assert!(table::contains(&marketplace.listings, nft_id), EListingNotFound);
+
+        let listing_info = table::borrow(&marketplace.listings, nft_id);
+
+        // Verify ownership
+        assert!(listing_info.seller == sender, ENotOwner);
+
+        // Remove listing
+        table::remove(&mut marketplace.listings, nft_id);
+
+        // Return NFT from escrow to seller
+        let nft: FraudGuardNFT = df::remove(&mut marketplace.id, nft_id);
+        transfer::public_transfer(nft, sender);
+
+        // Emit event
+        event::emit(NFTUnlisted {
+            nft_id,
+            seller: sender,
+            timestamp: tx_context::epoch_timestamp_ms(ctx),
+        });
+    }
+
+    /// Purchase an NFT from the marketplace
+    public entry fun purchase_nft(
+        marketplace: &mut Marketplace,
+        nft_id: ID,
+        payment: Coin<SUI>,
         ctx: &mut TxContext
     ) {
         assert!(marketplace.is_active, EMarketplaceNotActive);
-        assert!(listing.is_active, EListingNotActive);
-        
-        let payment_amount = coin::value(&payment);
-        assert!(payment_amount >= listing.price, EInsufficientPayment);
 
         let buyer = tx_context::sender(ctx);
-        let listing_id = object::id(&listing);
-        let timestamp = tx_context::epoch_timestamp_ms(ctx);
-        
-        // Calculate marketplace fee
-        let marketplace_fee = (listing.price * marketplace.fee_percentage) / 10000;
-        let seller_amount = listing.price - marketplace_fee;
+
+        // Check if listed
+        assert!(table::contains(&marketplace.listings, nft_id), EListingNotFound);
+
+        let listing_info = table::remove(&mut marketplace.listings, nft_id);
+        let seller = listing_info.seller;
+        let price = listing_info.price;
+
+        // Verify payment
+        assert!(coin::value(&payment) >= price, EInsufficientPayment);
+
+        // Calculate fees
+        let marketplace_fee = (price * MARKETPLACE_FEE_BASIS_POINTS) / FEE_DENOMINATOR;
+        let seller_amount = price - marketplace_fee;
 
         // Split payment
-        let marketplace_payment = coin::split(&mut payment, marketplace_fee, ctx);
-        let seller_payment = coin::split(&mut payment, seller_amount, ctx);
+        let mut payment = payment;
+        let fee_coin = coin::split(&mut payment, marketplace_fee, ctx);
+        let seller_coin = coin::split(&mut payment, seller_amount, ctx);
 
-        // Add marketplace fee to balance
-        balance::join(&mut marketplace.balance, coin::into_balance(marketplace_payment));
+        // Transfer payments
+        transfer::public_transfer(fee_coin, marketplace.fee_recipient);
+        transfer::public_transfer(seller_coin, seller);
 
-        // Update marketplace stats
-        marketplace.total_volume = marketplace.total_volume + listing.price;
-        marketplace.total_sales = marketplace.total_sales + 1;
-
-        // Emit purchase event
-        event::emit(NFTPurchased {
-            listing_id,
-            nft_id: listing.nft_id,
-            seller: listing.seller,
-            buyer,
-            price: listing.price,
-            marketplace_fee,
-            timestamp,
-        });
-
-        // Transfer payment to seller
-        transfer::public_transfer(seller_payment, listing.seller);
-        
-        // Return any excess payment to buyer
+        // Return excess payment to buyer
         if (coin::value(&payment) > 0) {
             transfer::public_transfer(payment, buyer);
         } else {
             coin::destroy_zero(payment);
         };
 
-        // Destroy the listing
-        let Listing { id, nft_id: _, seller: _, price: _, listed_at: _, is_active: _ } = listing;
-        object::delete(id);
-    }
+        // Transfer NFT from escrow to buyer
+        let nft: FraudGuardNFT = df::remove(&mut marketplace.id, nft_id);
+        transfer::public_transfer(nft, buyer);
 
-    /// Cancel a listing (Enhanced with events)
-    public entry fun cancel_listing(
-        listing: Listing,
-        ctx: &mut TxContext
-    ) {
-        assert!(listing.seller == tx_context::sender(ctx), ENotOwner);
-        assert!(listing.is_active, EListingNotActive);
+        // Update marketplace stats
+        marketplace.total_volume = marketplace.total_volume + price;
+        marketplace.total_sales = marketplace.total_sales + 1;
 
-        let listing_id = object::id(&listing);
-        let timestamp = tx_context::epoch_timestamp_ms(ctx);
-
-        // Emit cancellation event
-        event::emit(ListingCancelled {
-            listing_id,
-            nft_id: listing.nft_id,
-            seller: listing.seller,
-            timestamp,
+        // Emit event
+        event::emit(NFTPurchased {
+            nft_id,
+            seller,
+            buyer,
+            price,
+            marketplace_fee,
+            timestamp: tx_context::epoch_timestamp_ms(ctx),
         });
-
-        // Destroy the listing
-        let Listing { id, nft_id: _, seller: _, price: _, listed_at: _, is_active: _ } = listing;
-        object::delete(id);
     }
 
-    /// Update listing price (New function for Phase 1.2)
+    /// Update the price of a listed NFT
     public entry fun update_listing_price(
-        listing: &mut Listing,
+        marketplace: &mut Marketplace,
+        nft_id: ID,
         new_price: u64,
         ctx: &mut TxContext
     ) {
-        assert!(listing.seller == tx_context::sender(ctx), ENotOwner);
-        assert!(listing.is_active, EListingNotActive);
         assert!(new_price > 0, EInvalidPrice);
 
-        let old_price = listing.price;
-        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+        let sender = tx_context::sender(ctx);
 
-        // Update price
-        listing.price = new_price;
+        // Check if listed
+        assert!(table::contains(&marketplace.listings, nft_id), EListingNotFound);
 
-        // Emit price update event
-        event::emit(ListingPriceUpdated {
-            listing_id: object::id(listing),
-            nft_id: listing.nft_id,
-            seller: listing.seller,
+        let listing_info = table::borrow_mut(&mut marketplace.listings, nft_id);
+
+        // Verify ownership
+        assert!(listing_info.seller == sender, ENotOwner);
+
+        let old_price = listing_info.price;
+        listing_info.price = new_price;
+
+        // Emit event
+        event::emit(PriceUpdated {
+            nft_id,
+            seller: sender,
             old_price,
             new_price,
-            timestamp,
+            timestamp: tx_context::epoch_timestamp_ms(ctx),
         });
     }
 
-    /// Update listing metadata (New function for Phase 1.3)
-    public entry fun update_listing_metadata(
-        metadata: &mut ListingMetadata,
-        title: vector<u8>,
-        description: vector<u8>,
-        category: vector<u8>,
-        tags: vector<vector<u8>>,
-        ctx: &mut TxContext
-    ) {
-        assert!(!std::vector::is_empty(&title), EInvalidMetadata);
-        assert!(!std::vector::is_empty(&category), EInvalidMetadata);
+    // ===== View Functions =====
 
-        let timestamp = tx_context::epoch_timestamp_ms(ctx);
-
-        // Update metadata
-        metadata.title = string::utf8(title);
-        metadata.description = string::utf8(description);
-        metadata.category = string::utf8(category);
-        metadata.updated_at = timestamp;
-
-        // Clear and update tags
-        metadata.tags = std::vector::empty();
-        let mut i = 0;      
-        while (i < std::vector::length(&tags)) {
-            let tag = std::vector::borrow(&tags, i);
-            std::vector::push_back(&mut metadata.tags, string::utf8(*tag));
-            i = i + 1;
-        };
-
-        // Emit metadata update event
-        event::emit(ListingMetadataUpdated {
-            listing_id: metadata.listing_id,
-            nft_id: metadata.nft_id,
-            seller: tx_context::sender(ctx),
-            title: string::utf8(title),
-            description: string::utf8(description),
-            category: string::utf8(category),
-            timestamp,
-        });
+    /// Check if an NFT is listed
+    public fun is_listed(marketplace: &Marketplace, nft_id: ID): bool {
+        table::contains(&marketplace.listings, nft_id)
     }
 
-    /// Batch list multiple NFTs (New function for Phase 1.3)
-    public entry fun batch_list_nfts(
+    /// Get listing information
+    public fun get_listing_info(marketplace: &Marketplace, nft_id: ID): (address, u64, u64) {
+        assert!(table::contains(&marketplace.listings, nft_id), EListingNotFound);
+        let listing_info = table::borrow(&marketplace.listings, nft_id);
+        (listing_info.seller, listing_info.price, listing_info.created_at)
+    }
+
+    /// Get marketplace statistics
+    public fun get_marketplace_stats(marketplace: &Marketplace): (u64, u64) {
+        (marketplace.total_volume, marketplace.total_sales)
+    }
+
+    /// Get marketplace fee
+    public fun get_marketplace_fee(): u64 {
+        MARKETPLACE_FEE_BASIS_POINTS
+    }
+
+    // ===== Admin Functions =====
+
+    /// Update fee recipient (admin only)
+    public entry fun update_fee_recipient(
         marketplace: &mut Marketplace,
-        nft_ids: vector<ID>,
-        prices: vector<u64>,
-        titles: vector<vector<u8>>,
-        descriptions: vector<vector<u8>>,
-        categories: vector<vector<u8>>,
-        tags_list: vector<vector<vector<u8>>>,
-        ctx: &mut TxContext
+        _cap: &MarketplaceCap,
+        new_recipient: address,
     ) {
-        let batch_size = std::vector::length(&nft_ids);
-        assert!(batch_size > 0, EEmptyBatch);
-        assert!(batch_size == std::vector::length(&prices), EBatchSizeMismatch);
-        assert!(batch_size == std::vector::length(&titles), EBatchSizeMismatch);
-        assert!(batch_size == std::vector::length(&descriptions), EBatchSizeMismatch);
-        assert!(batch_size == std::vector::length(&categories), EBatchSizeMismatch);
-        assert!(batch_size == std::vector::length(&tags_list), EBatchSizeMismatch);
-
-        let seller = tx_context::sender(ctx);
-        let timestamp = tx_context::epoch_timestamp_ms(ctx);
-
-        let mut i = 0;
-        while (i < batch_size) {
-            let nft_id = *std::vector::borrow(&nft_ids, i);
-            let price = *std::vector::borrow(&prices, i);
-            let title = *std::vector::borrow(&titles, i);
-            let description = *std::vector::borrow(&descriptions, i);
-            let category = *std::vector::borrow(&categories, i);
-            let tags = *std::vector::borrow(&tags_list, i);
-
-            assert!(price > 0, EInvalidPrice);
-            assert!(!std::vector::is_empty(&title), EInvalidMetadata);
-            assert!(!std::vector::is_empty(&category), EInvalidMetadata);
-
-            let listing_id = object::new(ctx);
-            let listing_id_copy = object::uid_to_inner(&listing_id);
-
-            let listing = Listing {
-                id: listing_id,
-                nft_id,
-                seller,
-                price,
-                listed_at: timestamp,
-                is_active: true,
-            };
-
-            // Create metadata
-            let mut metadata = ListingMetadata {
-                id: object::new(ctx),
-                listing_id: listing_id_copy,
-                nft_id,
-                title: string::utf8(title),
-                description: string::utf8(description),
-                category: string::utf8(category),
-                tags: std::vector::empty(),
-                created_at: timestamp,
-                updated_at: timestamp,
-            };
-
-            // Add tags
-            let mut j = 0;
-            while (j < std::vector::length(&tags)) {
-                let tag = std::vector::borrow(&tags, j);
-                std::vector::push_back(&mut metadata.tags, string::utf8(*tag));
-                j = j + 1;
-            };
-
-            // Emit individual listing event
-            event::emit(NFTListed {
-                listing_id: listing_id_copy,
-                nft_id,
-                seller,
-                price,
-                marketplace_id: object::id(marketplace),
-                timestamp,
-            });
-
-            // Share objects
-            transfer::share_object(listing);
-            transfer::share_object(metadata);
-
-            i = i + 1;
-        };
+        marketplace.fee_recipient = new_recipient;
     }
 
-    /// Withdraw marketplace earnings (owner only)
-    public entry fun withdraw_earnings(
+    /// Set marketplace active status (admin only)
+    public entry fun set_marketplace_active(
         marketplace: &mut Marketplace,
-        cap: &MarketplaceCap,
-        amount: u64,
-        ctx: &mut TxContext
+        _cap: &MarketplaceCap,
+        active: bool,
     ) {
-        assert!(cap.marketplace_id == object::id(marketplace), ENotMarketplaceOwner);
-        assert!(balance::value(&marketplace.balance) >= amount, EInsufficientPayment);
-
-        let withdrawn = coin::take(&mut marketplace.balance, amount, ctx);
-        transfer::public_transfer(withdrawn, marketplace.owner);
-    }
-
-    /// Update marketplace fee (owner only)
-    public entry fun update_fee(
-        marketplace: &mut Marketplace,
-        cap: &MarketplaceCap,
-        new_fee_percentage: u64,
-    ) {
-        assert!(cap.marketplace_id == object::id(marketplace), ENotMarketplaceOwner);
-        marketplace.fee_percentage = new_fee_percentage;
-    }
-
-    /// Toggle marketplace active status (owner only)
-    public entry fun toggle_marketplace(
-        marketplace: &mut Marketplace,
-        cap: &MarketplaceCap,
-    ) {
-        assert!(cap.marketplace_id == object::id(marketplace), ENotMarketplaceOwner);
-        marketplace.is_active = !marketplace.is_active;
-    }
-
-    // ===== Public View Functions =====
-
-    /// Get marketplace info
-    public fun get_marketplace_info(marketplace: &Marketplace): (address, u64, u64, u64, bool) {
-        (
-            marketplace.owner,
-            marketplace.fee_percentage,
-            marketplace.total_volume,
-            marketplace.total_sales,
-            marketplace.is_active
-        )
-    }
-
-    /// Get marketplace balance
-    public fun get_marketplace_balance(marketplace: &Marketplace): u64 {
-        balance::value(&marketplace.balance)
-    }
-
-    /// Get listing info
-    public fun get_listing_info(listing: &Listing): (ID, address, u64, u64, bool) {
-        (
-            listing.nft_id,
-            listing.seller,
-            listing.price,
-            listing.listed_at,
-            listing.is_active
-        )
-    }
-
-    /// Get listing details (New function for Phase 1.3)
-    public fun get_listing_details(metadata: &ListingMetadata): (ID, string::String, string::String, string::String, vector<string::String>, u64, u64) {
-        (
-            metadata.nft_id,
-            metadata.title,
-            metadata.description,
-            metadata.category,
-            metadata.tags,
-            metadata.created_at,
-            metadata.updated_at
-        )
-    }
-
-    /// Check if listing is active
-    public fun is_listing_active(listing: &Listing): bool {
-        listing.is_active
-    }
-
-    /// Get listing price
-    public fun get_listing_price(listing: &Listing): u64 {
-        listing.price
-    }
-
-    /// Get listing seller
-    public fun get_listing_seller(listing: &Listing): address {
-        listing.seller
-    }
-
-    // ===== Helper Functions =====
-
-    /// Calculate marketplace fee for a given price
-    public fun calculate_fee(marketplace: &Marketplace, price: u64): u64 {
-        (price * marketplace.fee_percentage) / 10000
-    }
-
-    /// Calculate seller amount after fee
-    public fun calculate_seller_amount(marketplace: &Marketplace, price: u64): u64 {
-        price - calculate_fee(marketplace, price)
-    }
-
-    // ===== Test Functions =====
-
-    #[test_only]
-    public fun test_create_marketplace(ctx: &mut TxContext): (Marketplace, MarketplaceCap) {
-        let marketplace_id = object::new(ctx);
-        let marketplace_id_copy = object::uid_to_inner(&marketplace_id);
-
-        let marketplace = Marketplace {
-            id: marketplace_id,
-            owner: tx_context::sender(ctx),
-            fee_percentage: 250, // 2.5%
-            total_volume: 0,
-            total_sales: 0,
-            is_active: true,
-            balance: balance::zero(),
-        };
-
-        let cap = MarketplaceCap {
-            id: object::new(ctx),
-            marketplace_id: marketplace_id_copy,
-        };
-
-        (marketplace, cap)
-    }
-
-    #[test_only]
-    public fun test_create_listing(
-        nft_id: ID,
-        seller: address,
-        price: u64,
-        ctx: &mut TxContext
-    ): Listing {
-        Listing {
-            id: object::new(ctx),
-            nft_id,
-            seller,
-            price,
-            listed_at: 0,
-            is_active: true,
-        }
+        marketplace.is_active = active;
     }
 }
