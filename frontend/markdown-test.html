@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Markdown Test</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/react-markdown@9.0.1/react-markdown.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .prose {
+            max-width: none;
+        }
+        .prose h1, .prose h2, .prose h3, .prose h4, .prose h5, .prose h6 {
+            color: #1f2937;
+            font-weight: 600;
+        }
+        .prose p, .prose li {
+            color: #374151;
+        }
+        .prose strong {
+            color: #1f2937;
+            font-weight: 600;
+        }
+        .prose em {
+            color: #374151;
+            font-style: italic;
+        }
+        .prose ul, .prose ol {
+            color: #374151;
+        }
+        .prose code {
+            background-color: #f3f4f6;
+            padding: 0.125rem 0.25rem;
+            border-radius: 0.25rem;
+            font-size: 0.875em;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 p-8">
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-bold text-gray-900 mb-8">Markdown Rendering Test</h1>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Raw Markdown -->
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h2 class="text-xl font-semibold mb-4">Raw Markdown</h2>
+                <pre id="raw-markdown" class="text-sm bg-gray-100 p-4 rounded overflow-auto"></pre>
+            </div>
+            
+            <!-- Rendered Markdown -->
+            <div class="bg-white p-6 rounded-lg shadow">
+                <h2 class="text-xl font-semibold mb-4">Rendered Output</h2>
+                <div id="rendered-markdown" class="prose prose-sm"></div>
+            </div>
+        </div>
+    </div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+        const ReactMarkdown = window.ReactMarkdown;
+
+        // Sample markdown content that the chat bot might generate
+        const sampleMarkdown = `## 🛡️ FraudGuard's AI-Powered Fraud Detection
+
+**FraudGuard** uses advanced *artificial intelligence* to protect users from fraudulent NFTs. Here's how it works:
+
+### 🔍 Key Features:
+
+- **Real-time Plagiarism Detection** 🎨 - Scans uploaded images against existing NFT databases
+- **Smart Contract Analysis** ⚡ - Automatically reviews contract code for suspicious patterns  
+- **Community Reporting** 👥 - Users can flag suspicious listings
+- **AI Risk Scoring** 🎯 - Each NFT gets a fraud risk score from 0-100
+
+### 🚀 How It Works:
+
+1. **Upload Detection** 📤 - When an NFT is listed, our AI immediately scans it
+2. **Image Analysis** 🖼️ - Computer vision checks for duplicates or modifications
+3. **Metadata Verification** 📋 - Validates authenticity of NFT metadata
+4. **Risk Assessment** ⚠️ - Generates a comprehensive fraud risk report
+
+### ✅ Benefits:
+
+- 💡 **Instant Results** - Get fraud analysis in seconds
+- 🔗 **Blockchain Integration** - Works seamlessly with Sui network
+- 📱 **User-Friendly** - Clear warnings and explanations for all users
+
+> 💎 **Pro Tip**: Always check the fraud score before purchasing any NFT!
+
+\`\`\`javascript
+// Example API call
+const riskScore = await fraudGuard.analyzeNFT(nftId);
+\`\`\``;
+
+        function MarkdownTest() {
+            useEffect(() => {
+                document.getElementById('raw-markdown').textContent = sampleMarkdown;
+            }, []);
+
+            return (
+                <ReactMarkdown>{sampleMarkdown}</ReactMarkdown>
+            );
+        }
+
+        ReactDOM.render(<MarkdownTest />, document.getElementById('rendered-markdown'));
+    </script>
+</body>
+</html>

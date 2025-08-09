@@ -7,6 +7,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { useChat, ChatMessage } from '@/hooks/useChat';
 import { cn } from '@/lib/utils';
+import ReactMarkdown from 'react-markdown';
 
 export const CustomerServiceChatbox: React.FC = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -183,7 +184,13 @@ const MessageBubble: React.FC<{ message: ChatMessage }> = ({ message }) => {
           ? "bg-gradient-to-r from-blue-600 to-purple-600 text-white"
           : "bg-gray-100 text-gray-900"
       )}>
-        <div className="whitespace-pre-wrap">{message.content}</div>
+        {message.isUser ? (
+          <div className="whitespace-pre-wrap">{message.content}</div>
+        ) : (
+          <div className="prose prose-sm max-w-none prose-headings:text-gray-900 prose-p:text-gray-900 prose-strong:text-gray-900 prose-em:text-gray-900 prose-ul:text-gray-900 prose-ol:text-gray-900 prose-li:text-gray-900">
+            <ReactMarkdown>{message.content}</ReactMarkdown>
+          </div>
+        )}
         {message.images && message.images.length > 0 && (
           <div className="mt-2 grid grid-cols-2 gap-2">
             {message.images.map((image, index) => (

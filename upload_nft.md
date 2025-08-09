@@ -16,10 +16,12 @@ This project is a decentralized NFT marketplace (like Shopee) where users can:
 | **Sui**       | Blockchain for NFTs, ownership, and trading |
 | **Marketplace** | On-chain marketplace for listing/buying NFTs |
 | **FastAPI**   | Backend logic for upload, fraud detection, minting |
-| **Walrus**    | S3-compatible storage for NFT images and metadata |
 | **Supabase**  | PostgreSQL + pgvector for metadata, user data, fraud results |
 | **zkLogin**   | Web3 walletless login via Google |
 | **AI Agent**  | Custom fraud scanner with confidence scoring and flags |
+| **RAG AI Agent**  | Use RAG to create a personalized chat bot |
+| **Reputation AI Agent**  | AI agent to compute reputation scores and ban low score user |
+`
 
 ---
 
