@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: fraudguard-backend
+    env: python
+    plan: starter
+    buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+    startCommand: python start.py
+    envVars:
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 8000
+      # Add all other .env keys here, or use Render's "Environment" tab for secrets
+    autoDeploy: true
