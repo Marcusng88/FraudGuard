@@ -456,6 +456,142 @@ module fraudguard::marketplace {
         };
     }
 
+    /// Buy an NFT directly without requiring listing object (database-driven approach)
+    /// This function validates purchase conditions and transfers ownership
+    public entry fun buy_nft_direct(
+        nft: FraudGuardNFT,
+        seller: address,
+        price: u64,
+        mut payment: Coin<SUI>,
+        ctx: &mut TxContext
+    ) {
+        // Validate inputs
+        assert!(price > 0, EInvalidPrice);
+        
+        // Check payment amount matches price
+        let payment_amount = coin::value(&payment);
+        assert!(payment_amount >= price, EInsufficientPayment);
+
+        let buyer = tx_context::sender(ctx);
+        let nft_id = fraudguard_nft::get_nft_id(&nft);
+        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+        
+        // Ensure buyer is not the seller
+        assert!(buyer != seller, ENotOwner);
+        
+        // For simplified version, use a fixed marketplace fee of 2.5% (250 basis points)
+        let marketplace_fee = (price * 250) / 10000;
+        let seller_amount = price - marketplace_fee;
+
+        // Split payment
+        let marketplace_payment = if (marketplace_fee > 0) {
+            coin::split(&mut payment, marketplace_fee, ctx)
+        } else {
+            coin::zero(ctx)
+        };
+        
+        let seller_payment = if (seller_amount > 0) {
+            coin::split(&mut payment, seller_amount, ctx)
+        } else {
+            coin::zero(ctx)
+        };
+
+        // Emit purchase event for database tracking
+        event::emit(NFTPurchased {
+            listing_id: object::id_from_address(@0x0), // Use zero address since no listing object
+            nft_id,
+            seller,
+            buyer,
+            price,
+            marketplace_fee,
+            timestamp,
+        });
+
+        // Transfer NFT to buyer (this changes ownership on blockchain)
+        transfer::public_transfer(nft, buyer);
+
+        // Transfer payment to seller
+        transfer::public_transfer(seller_payment, seller);
+        
+        // Marketplace fee goes to a designated address (for simplicity, destroy it for now)
+        // In production, this should go to the marketplace treasury
+        coin::destroy_zero(marketplace_payment);
+        
+        // Return any excess payment to buyer
+        if (coin::value(&payment) > 0) {
+            transfer::public_transfer(payment, buyer);
+        } else {
+            coin::destroy_zero(payment);
+        };
+    }
+
+    /// Buy an NFT from a simplified listing (matches list_nft_simple pattern)
+    public entry fun buy_nft_simple(
+        listing: &mut Listing,
+        nft: FraudGuardNFT,
+        mut payment: Coin<SUI>,
+        ctx: &mut TxContext
+    ) {
+        // Validate listing is active
+        assert!(listing.is_active, EListingNotActive);
+        
+        // Check payment amount matches price
+        let payment_amount = coin::value(&payment);
+        assert!(payment_amount >= listing.price, EInsufficientPayment);
+
+        let buyer = tx_context::sender(ctx);
+        let listing_id = object::id(listing);
+        let timestamp = tx_context::epoch_timestamp_ms(ctx);
+        
+        // For simplified version, use a fixed marketplace fee of 2.5% (250 basis points)
+        let marketplace_fee = (listing.price * 250) / 10000;
+        let seller_amount = listing.price - marketplace_fee;
+
+        // Split payment
+        let marketplace_payment = if (marketplace_fee > 0) {
+            coin::split(&mut payment, marketplace_fee, ctx)
+        } else {
+            coin::zero(ctx)
+        };
+        
+        let seller_payment = if (seller_amount > 0) {
+            coin::split(&mut payment, seller_amount, ctx)
+        } else {
+            coin::zero(ctx)
+        };
+
+        // Mark listing as inactive
+        listing.is_active = false;
+
+        // Emit purchase event
+        event::emit(NFTPurchased {
+            listing_id,
+            nft_id: listing.nft_id,
+            seller: listing.seller,
+            buyer,
+            price: listing.price,
+            marketplace_fee,
+            timestamp,
+        });
+
+        // Transfer NFT to buyer
+        transfer::public_transfer(nft, buyer);
+
+        // Transfer payment to seller
+        transfer::public_transfer(seller_payment, listing.seller);
+        
+        // Marketplace fee goes to a designated address (for simplicity, destroy it for now)
+        // In production, this should go to the marketplace treasury
+        coin::destroy_zero(marketplace_payment);
+        
+        // Return any excess payment to buyer
+        if (coin::value(&payment) > 0) {
+            transfer::public_transfer(payment, buyer);
+        } else {
+            coin::destroy_zero(payment);
+        };
+    }
+
     /// Cancel a listing (Simplified)
     public entry fun cancel_listing_simple(
         listing: Listing,
