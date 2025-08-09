@@ -8,6 +8,7 @@ import { getFullnodeUrl } from '@mysten/sui/client';
 import '@mysten/dapp-kit/dist/index.css';
 import { AuthProvider } from './contexts/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { CustomerServiceChatbox } from './components/CustomerServiceChatbox';
 
 import { WalletProvider } from './hooks/useWallet';
 import Index from "./pages/Index";
@@ -40,25 +41,27 @@ const App = () => (
               <Toaster />
               <Sonner />
               <BrowserRouter>
-              <Routes>
-                <Route path="/" element={<Index />} />
-                <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-                <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
-                <Route path="/nft/:nftId" element={<ProtectedRoute><NFTDetail /></ProtectedRoute>} />
-                <Route path="/create" element={<ProtectedRoute><CreateNft /></ProtectedRoute>} />
-                <Route path="/list/:nftId" element={<ProtectedRoute><ListNft /></ProtectedRoute>} />
+                <Routes>
+                  <Route path="/" element={<Index />} />
+                  <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+                  <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
+                  <Route path="/nft/:nftId" element={<ProtectedRoute><NFTDetail /></ProtectedRoute>} />
+                  <Route path="/create" element={<ProtectedRoute><CreateNft /></ProtectedRoute>} />
+                  <Route path="/list/:nftId" element={<ProtectedRoute><ListNft /></ProtectedRoute>} />
                 <Route path="/unlist/:listingId" element={<ProtectedRoute><UnlistNft /></ProtectedRoute>} />
                 <Route path="/edit-listing/:listingId" element={<ProtectedRoute><EditListing /></ProtectedRoute>} />
                 <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
-                {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
-                <Route path="*" element={<NotFound />} />
-              </Routes>
-            </BrowserRouter>
-          </TooltipProvider>
-        </AuthProvider>
-      </WalletProvider>
-    </SuiWalletProvider>
-  </SuiClientProvider>
+                  {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
+                  <Route path="*" element={<NotFound />} />
+                </Routes>
+                {/* Customer Service Chatbox - appears on all pages */}
+                <CustomerServiceChatbox />
+              </BrowserRouter>
+            </TooltipProvider>
+          </AuthProvider>
+        </WalletProvider>
+      </SuiWalletProvider>
+    </SuiClientProvider>
   </QueryClientProvider>
 );
 

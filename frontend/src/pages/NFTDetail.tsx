@@ -133,9 +133,17 @@ const NFTDetail = () => {
   
   // Determine threat level based on fraud detection results
   // Use analysis data if available, otherwise fall back to NFT data
+  // Fixed logic: confidence_score represents AI's confidence in the analysis, not fraud probability
+  // When is_fraud = false and confidence >= 0.8, it means high confidence that it's NOT fraud (SAFE)
+  // When is_fraud = false and confidence < 0.8, it means low confidence in analysis (SUSPICIOUS)
+  // When is_fraud = true, it's flagged regardless of confidence (DANGER)
   const isFraud = analysisData?.is_fraud ?? nft.is_fraud;
   const confidenceScore = analysisData?.confidence_score ?? nft.confidence_score;
-  const threatLevel = isFraud ? 'danger' : (confidenceScore >= 0.8 ? 'safe' : 'warning');
+  const threatLevel = isFraud 
+    ? 'danger' 
+    : (confidenceScore && confidenceScore >= 0.8) 
+      ? 'safe' 
+      : 'warning';
   const config = threatConfig[threatLevel];
   const Icon = config.icon;
 

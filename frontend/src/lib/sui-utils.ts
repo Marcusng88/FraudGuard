@@ -88,7 +88,9 @@ export function createIPFSUrl(hash: string): string {
 }
 
 // Package ID loaded from environment variables
-export const PACKAGE_ID = import.meta.env.VITE_MARKETPLACE_PACKAGE_ID || '0x7ae460902e9017c7c9a5c898443105435b7393fc5776ace61b2f0c6a1f578381';
+// Latest package (with escrow marketplace): 0x3f6018891c66a9844e3fe134912318341bd96dd037c1ccbfae95387fe4c5c231
+// Working package (regular marketplace): 0x3d18ff48e1da5cc53bc3a9f9104b0242f44812408d212aa1f41fdde6bbbfa97a
+export const PACKAGE_ID = import.meta.env.VITE_MARKETPLACE_PACKAGE_ID || '0x3f6018891c66a9844e3fe134912318341bd96dd037c1ccbfae95387fe4c5c231';
 export const MARKETPLACE_OBJECT_ID = import.meta.env.VITE_MARKETPLACE_OBJECT_ID || "0x32ba6dea827dcb5539674b1c092111a70a064ac8c9144926d67d85367777dd06";
 
 /**

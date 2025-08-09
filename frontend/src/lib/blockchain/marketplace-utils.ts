@@ -8,7 +8,7 @@ import { SuiClient } from '@mysten/sui/client';
 import { SuiObjectRef } from '@mysten/sui/client';
 
 // Configuration
-export const MARKETPLACE_PACKAGE_ID = import.meta.env.VITE_MARKETPLACE_PACKAGE_ID || "0x3d18ff48e1da5cc53bc3a9f9104b0242f44812408d212aa1f41fdde6bbbfa97a"; // Use deployed package ID
+export const MARKETPLACE_PACKAGE_ID = import.meta.env.VITE_MARKETPLACE_PACKAGE_ID || "0x3f6018891c66a9844e3fe134912318341bd96dd037c1ccbfae95387fe4c5c231"; // Use deployed package ID
 export const MARKETPLACE_MODULE = "marketplace";
 export const MARKETPLACE_OBJECT_ID = import.meta.env.VITE_MARKETPLACE_OBJECT_ID || "0x32ba6dea827dcb5539674b1c092111a70a064ac8c9144926d67d85367777dd06"; // Use deployed marketplace object ID
 

@@ -435,10 +435,10 @@ const HackerScene: React.FC<HackerSceneProps> = ({ onHackerClick, isLocked }) =>
           transition={{ delay: 1 }}
         >
           <p className="text-2xl text-gray-300 mb-2 font-bold">
-            TAP THE INTRUDER TO TRIGGER SURVEILLANCE
+            INITIATE THREAT DETECTION PROTOCOLS
           </p>
           <p className="text-lg text-gray-400">
-            Click the hacker to activate security protocols
+            Click the intruder to activate security monitoring
           </p>
         </motion.div>
       )}
