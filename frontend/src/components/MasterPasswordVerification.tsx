@@ -50,7 +50,7 @@ export function MasterPasswordVerification({
         });
         setMasterPassword('');
         onSuccess();
-        onClose();
+        // Don't call onClose here - let the parent component handle it
       } else {
         setError('Incorrect master password. Please try again.');
         toast({

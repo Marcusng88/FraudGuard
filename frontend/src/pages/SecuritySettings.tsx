@@ -42,16 +42,17 @@ import {
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSecurity } from '@/contexts/SecurityContext';
 import { useToast } from '@/hooks/use-toast';
 
 export default function SecuritySettings() {
   const { wallet } = useWallet();
   const { isAuthenticated } = useAuth();
+  const { securitySettings, updateSecuritySetting } = useSecurity();
   const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('overview');
   const [isMasterPasswordVerified, setIsMasterPasswordVerified] = useState(false);
   const [showMasterPasswordDialog, setShowMasterPasswordDialog] = useState(false);
-  const [requireMasterPassword, setRequireMasterPassword] = useState(true);
 
   // Security status states
   const [securityStatus, setSecurityStatus] = useState({
@@ -127,18 +128,15 @@ export default function SecuritySettings() {
 
   // Load master password requirement setting from localStorage
   useEffect(() => {
-    const savedRequirement = localStorage.getItem('fraudguard-require-master-password');
-    if (savedRequirement !== null) {
-      setRequireMasterPassword(JSON.parse(savedRequirement));
-    }
+    // These settings are now managed by SecurityContext, so no need to load from localStorage
   }, []);
 
   // Check if master password verification is needed when component mounts
   useEffect(() => {
-    if (isAuthenticated && !isMasterPasswordVerified && requireMasterPassword) {
+    if (isAuthenticated && !isMasterPasswordVerified && securitySettings.requireMasterPasswordForSecurity) {
       setShowMasterPasswordDialog(true);
     }
-  }, [isAuthenticated, isMasterPasswordVerified, requireMasterPassword]);
+  }, [isAuthenticated, isMasterPasswordVerified, securitySettings.requireMasterPasswordForSecurity]);
 
   const handleMasterPasswordSuccess = () => {
     setIsMasterPasswordVerified(true);
@@ -150,8 +148,7 @@ export default function SecuritySettings() {
   };
 
   const handleMasterPasswordToggle = (checked: boolean) => {
-    setRequireMasterPassword(checked);
-    localStorage.setItem('fraudguard-require-master-password', JSON.stringify(checked));
+    updateSecuritySetting('requireMasterPasswordForSecurity', checked);
     
     // If turning off master password requirement, automatically verify
     if (!checked) {
@@ -164,6 +161,28 @@ export default function SecuritySettings() {
       description: checked 
         ? "Master password verification is now required to access security settings."
         : "Master password verification is now optional for security settings.",
+    });
+  };
+
+  const handleProfilePasswordToggle = (checked: boolean) => {
+    updateSecuritySetting('requireMasterPasswordForProfile', checked);
+    
+    toast({
+      title: checked ? "🔐 Profile Protection Enabled" : "🔓 Profile Protection Disabled",
+      description: checked 
+        ? "Master password verification is now required to access profile page."
+        : "Profile page can now be accessed without master password verification.",
+    });
+  };
+
+  const handlePurchasePasswordToggle = (checked: boolean) => {
+    updateSecuritySetting('requireMasterPasswordForPurchase', checked);
+    
+    toast({
+      title: checked ? "🔐 Purchase Protection Enabled" : "🔓 Purchase Protection Disabled",
+      description: checked 
+        ? "Master password verification is now required before buying NFTs."
+        : "NFTs can now be purchased without master password verification.",
     });
   };
 
@@ -227,7 +246,7 @@ export default function SecuritySettings() {
   }
 
   // Show master password verification dialog if not verified and required
-  if (!isMasterPasswordVerified && requireMasterPassword) {
+  if (!isMasterPasswordVerified && securitySettings.requireMasterPasswordForSecurity) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
         <CyberNavigation />
@@ -502,8 +521,32 @@ export default function SecuritySettings() {
                       <p className="text-gray-400 text-sm">Require master password verification to access security settings</p>
                     </div>
                     <Switch
-                      checked={requireMasterPassword}
+                      checked={securitySettings.requireMasterPasswordForSecurity}
                       onCheckedChange={handleMasterPasswordToggle}
+                      className="data-[state=checked]:bg-purple-600"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg">
+                    <div>
+                      <h4 className="text-white font-medium">Profile Page Protection</h4>
+                      <p className="text-gray-400 text-sm">Require master password verification to access profile page</p>
+                    </div>
+                    <Switch
+                      checked={securitySettings.requireMasterPasswordForProfile}
+                      onCheckedChange={handleProfilePasswordToggle}
+                      className="data-[state=checked]:bg-purple-600"
+                    />
+                  </div>
+                  
+                  <div className="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg">
+                    <div>
+                      <h4 className="text-white font-medium">NFT Purchase Protection</h4>
+                      <p className="text-gray-400 text-sm">Require master password verification before buying NFTs</p>
+                    </div>
+                    <Switch
+                      checked={securitySettings.requireMasterPasswordForPurchase}
+                      onCheckedChange={handlePurchasePasswordToggle}
                       className="data-[state=checked]:bg-purple-600"
                     />
                   </div>

@@ -31,10 +31,16 @@ import {
   Wallet,
   Save,
   RefreshCw,
-  RotateCcw
+  RotateCcw,
+  Settings,
+  User,
+  ShoppingCart
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { realWalrusSealPasswordManager, PasswordEntry } from '../lib/walrus-seal-real';
+import { Switch } from "@/components/ui/switch";
+import { useSecurity } from "@/contexts/SecurityContext";
+import { MasterPasswordVerification } from "./MasterPasswordVerification";
 
 interface PasswordManagerProps {
   className?: string;
@@ -56,6 +62,11 @@ export function PasswordManager({ className }: PasswordManagerProps) {
   const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({});
   const [passwordStrength, setPasswordStrength] = useState({ score: 0, strength: "weak" as any });
   const [isInitializing, setIsInitializing] = useState(false);
+  
+  // Security settings state
+  const { securitySettings, updateSecuritySetting } = useSecurity();
+  const [showMasterPasswordDialog, setShowMasterPasswordDialog] = useState(false);
+  const [pendingSecurityAction, setPendingSecurityAction] = useState<(() => void) | null>(null);
   
   // New password form state
   const [newPassword, setNewPassword] = useState({
@@ -233,6 +244,34 @@ export function PasswordManager({ className }: PasswordManagerProps) {
           variant: "destructive"
         });
       }
+    }
+  };
+
+  // Security setting toggle handler
+  const handleSecuritySettingToggle = (setting: keyof typeof securitySettings, newValue: boolean) => {
+    if (newValue) {
+      // If enabling a security feature, require master password verification
+      setPendingSecurityAction(() => () => updateSecuritySetting(setting, true));
+      setShowMasterPasswordDialog(true);
+    } else {
+      // If disabling, allow immediately
+      updateSecuritySetting(setting, false);
+      toast({
+        title: "🔓 Security Feature Disabled",
+        description: `${setting === 'requireMasterPasswordForProfile' ? 'Profile access' : 'NFT purchases'} no longer require master password verification.`,
+      });
+    }
+  };
+
+  // Handle master password verification success
+  const handleMasterPasswordSuccess = () => {
+    if (pendingSecurityAction) {
+      pendingSecurityAction();
+      setPendingSecurityAction(null);
+      toast({
+        title: "🔒 Security Feature Enabled",
+        description: "Master password verification has been enabled for this feature.",
+      });
     }
   };
 
@@ -991,6 +1030,89 @@ export function PasswordManager({ className }: PasswordManagerProps) {
           </div>
         </CardContent>
       </Card>
+
+      {/* Advanced Security Settings */}
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Settings className="h-5 w-5 text-purple-500" />
+            Advanced Security Settings
+          </CardTitle>
+          <CardDescription>
+            Configure additional security requirements for sensitive actions
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-6">
+            {/* Profile Access Security */}
+            <div className="flex items-center justify-between p-4 border rounded-lg bg-gray-50/50">
+              <div className="flex items-center gap-3">
+                <User className="h-5 w-5 text-blue-500" />
+                <div>
+                  <h4 className="font-medium">Profile Page Access</h4>
+                  <p className="text-sm text-gray-600">
+                    Require master password verification before accessing profile page
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Switch
+                  checked={securitySettings.requireMasterPasswordForProfile}
+                  onCheckedChange={(checked) => handleSecuritySettingToggle('requireMasterPasswordForProfile', checked)}
+                />
+                <Badge variant={securitySettings.requireMasterPasswordForProfile ? "default" : "secondary"}>
+                  {securitySettings.requireMasterPasswordForProfile ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+            </div>
+
+            {/* NFT Purchase Security */}
+            <div className="flex items-center justify-between p-4 border rounded-lg bg-gray-50/50">
+              <div className="flex items-center gap-3">
+                <ShoppingCart className="h-5 w-5 text-green-500" />
+                <div>
+                  <h4 className="font-medium">NFT Purchase Verification</h4>
+                  <p className="text-sm text-gray-600">
+                    Require master password verification before buying NFTs
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Switch
+                  checked={securitySettings.requireMasterPasswordForPurchase}
+                  onCheckedChange={(checked) => handleSecuritySettingToggle('requireMasterPasswordForPurchase', checked)}
+                />
+                <Badge variant={securitySettings.requireMasterPasswordForPurchase ? "default" : "secondary"}>
+                  {securitySettings.requireMasterPasswordForPurchase ? "Enabled" : "Disabled"}
+                </Badge>
+              </div>
+            </div>
+
+            {/* Security Note */}
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="flex items-start gap-2">
+                <Shield className="h-4 w-4 text-blue-500 mt-0.5" />
+                <div className="text-sm text-blue-700">
+                  <p className="font-medium">Security Note:</p>
+                  <p>When enabled, these features will require you to enter your master password before performing the protected action. This adds an extra layer of security to prevent unauthorized access to sensitive areas.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Master Password Verification Dialog */}
+      <MasterPasswordVerification
+        isOpen={showMasterPasswordDialog}
+        onClose={() => {
+          setShowMasterPasswordDialog(false);
+          setPendingSecurityAction(null);
+        }}
+        onSuccess={handleMasterPasswordSuccess}
+        title="Master Password Verification Required"
+        description="Please enter your master password to enable this security feature."
+      />
     </div>
   );
 }

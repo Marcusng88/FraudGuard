@@ -10,6 +10,8 @@ import { useWallet } from '@/hooks/useWallet';
 import { recordBlockchainTransaction } from '@/lib/api';
 import { extractPurchaseEventData, getTransactionDetails, MARKETPLACE_OBJECT_ID } from '@/lib/blockchain-utils';
 import { createAnalysisPreview } from '@/lib/text-utils';
+import { useSecurity } from '@/contexts/SecurityContext';
+import { MasterPasswordVerification } from './MasterPasswordVerification';
 
 interface NftCardProps {
   nft: NFT;
@@ -43,9 +45,12 @@ export function NftCard({ nft }: NftCardProps) {
   const navigate = useNavigate();
   const { wallet, connect, executeBuyTransaction, validateSufficientBalance, calculateMarketplaceFee } = useWallet();
   const { toast } = useToast();
+  const { securitySettings } = useSecurity();
   const [imageError, setImageError] = useState(false);
   const [imageLoading, setImageLoading] = useState(true);
   const [isBuying, setIsBuying] = useState(false);
+  const [showMasterPasswordDialog, setShowMasterPasswordDialog] = useState(false);
+  const [pendingPurchase, setPendingPurchase] = useState<(() => void) | null>(null);
   
   // Determine threat level based on fraud status and confidence
   const threatLevel = nft.is_fraud ? 'danger' : (nft.confidence_score >= 0.8 ? 'safe' : 'warning');
@@ -114,6 +119,19 @@ export function NftCard({ nft }: NftCardProps) {
       connect();
       return;
     }
+
+    // Check if master password verification is required for purchases
+    if (securitySettings.requireMasterPasswordForPurchase) {
+      setPendingPurchase(() => () => handlePurchaseLogic());
+      setShowMasterPasswordDialog(true);
+      return;
+    }
+
+    // If no security requirement, proceed with purchase
+    await handlePurchaseLogic();
+  };
+
+  const handlePurchaseLogic = async () => {
 
     if (!nft.price || nft.price <= 0) {
       toast({
@@ -239,6 +257,13 @@ export function NftCard({ nft }: NftCardProps) {
     }
   };
 
+  const handleMasterPasswordSuccess = () => {
+    setShowMasterPasswordDialog(false);
+    if (pendingPurchase) {
+      pendingPurchase();
+    }
+  };
+
   const handleImageLoad = () => {
     setImageLoading(false);
     setImageError(false);
@@ -254,7 +279,8 @@ export function NftCard({ nft }: NftCardProps) {
   const imageUrl = getImageUrl();
 
   return (
-    <Card 
+    <>
+      <Card 
       className={`
         glass-panel relative overflow-hidden group hover-glow cursor-pointer
         ${nft.is_fraud ? 'fraud-alert' : ''}
@@ -401,5 +427,15 @@ export function NftCard({ nft }: NftCardProps) {
       {/* Cyber border effect */}
       <div className="absolute inset-0 cyber-border opacity-30 group-hover:opacity-60 transition-opacity" />
     </Card>
+
+    {/* Master Password Verification Dialog */}
+    <MasterPasswordVerification
+      isOpen={showMasterPasswordDialog}
+      onSuccess={handleMasterPasswordSuccess}
+      onCancel={() => setShowMasterPasswordDialog(false)}
+      title="Verify Master Password"
+      description="Please enter your master password to complete this purchase."
+    />
+    </>
   );
 }

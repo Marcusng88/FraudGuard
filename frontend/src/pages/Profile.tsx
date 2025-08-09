@@ -32,13 +32,20 @@ import { useUserProfile, useUpdateUserProfile } from '@/hooks/useProfile';
 import { useNavigate } from 'react-router-dom';
 import { EditListingDialog } from '@/components/EditListingDialog';
 import { ProfileEditDialog } from '@/components/ProfileEditDialog';
+import { MasterPasswordVerification } from '@/components/MasterPasswordVerification';
+import { useSecurity } from '@/contexts/SecurityContext';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Profile = () => {
   const { wallet, disconnect, connect, refreshBalance } = useWallet();
+  const { isAuthenticated } = useAuth();
+  const { securitySettings } = useSecurity();
   const [activeTab, setActiveTab] = useState('overview');
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false);
   const [isProfileEditOpen, setIsProfileEditOpen] = useState(false);
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
+  const [isMasterPasswordVerified, setIsMasterPasswordVerified] = useState(false);
+  const [showMasterPasswordDialog, setShowMasterPasswordDialog] = useState(false);
 
   const navigate = useNavigate();
 
@@ -66,6 +73,28 @@ const Profile = () => {
       setUserAvatar(savedAvatar);
     }
   }, [wallet?.address, refreshBalance]);
+
+  // Check if master password verification is needed when component mounts
+  useEffect(() => {
+    console.log('Profile useEffect - isAuthenticated:', isAuthenticated, 'isMasterPasswordVerified:', isMasterPasswordVerified, 'requireMasterPasswordForProfile:', securitySettings.requireMasterPasswordForProfile);
+    if (isAuthenticated && !isMasterPasswordVerified && securitySettings.requireMasterPasswordForProfile) {
+      setShowMasterPasswordDialog(true);
+    }
+  }, [isAuthenticated, isMasterPasswordVerified, securitySettings.requireMasterPasswordForProfile]);
+
+  const handleMasterPasswordSuccess = () => {
+    console.log('Profile handleMasterPasswordSuccess called');
+    setIsMasterPasswordVerified(true);
+    setShowMasterPasswordDialog(false);
+    // Don't redirect - stay on profile page
+  };
+
+  const handleMasterPasswordClose = () => {
+    console.log('Profile handleMasterPasswordClose called');
+    setShowMasterPasswordDialog(false);
+    // Don't redirect - let the user stay on the profile page
+    // The component will re-render and show the profile content
+  };
 
   const handleNavigateToSecurity = () => {
     navigate('/security');
@@ -165,6 +194,49 @@ const Profile = () => {
             </Button>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // Show master password verification dialog if not verified and required
+  console.log('Profile early return check - isMasterPasswordVerified:', isMasterPasswordVerified, 'requireMasterPasswordForProfile:', securitySettings.requireMasterPasswordForProfile);
+  if (!isMasterPasswordVerified && securitySettings.requireMasterPasswordForProfile) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
+        <CyberNavigation />
+        <FloatingWarningIcon />
+        
+        <div className="container mx-auto px-4 py-8">
+          <div className="mb-8">
+            <h1 className="text-4xl font-bold text-white mb-2">Profile</h1>
+            <p className="text-gray-300">Manage your profile and account settings</p>
+          </div>
+
+          <Card className="bg-gray-800/50 border-gray-700 max-w-md mx-auto">
+            <div className="p-6 text-center">
+              <Lock className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+              <h3 className="text-lg font-semibold text-white mb-2">Master Password Required</h3>
+              <p className="text-gray-400 mb-4">
+                To access your profile, please verify your master password.
+              </p>
+              <Button 
+                onClick={() => setShowMasterPasswordDialog(true)}
+                className="w-full"
+              >
+                <Lock className="h-4 w-4 mr-2" />
+                Enter Master Password
+              </Button>
+            </div>
+          </Card>
+        </div>
+
+        <MasterPasswordVerification
+          isOpen={showMasterPasswordDialog}
+          onClose={handleMasterPasswordClose}
+          onSuccess={handleMasterPasswordSuccess}
+          title="Master Password Required"
+          description="Please enter your master password to access your profile."
+        />
       </div>
     );
   }

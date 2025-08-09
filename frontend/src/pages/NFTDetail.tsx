@@ -35,6 +35,8 @@ import { AnalysisDetails, recordBlockchainTransaction } from '@/lib/api';
 import { useWallet } from '@/hooks/useWallet';
 import { useToast } from '@/hooks/use-toast';
 import { extractPurchaseEventData, getTransactionDetails, MARKETPLACE_OBJECT_ID } from '@/lib/blockchain-utils';
+import { MasterPasswordVerification } from '@/components/MasterPasswordVerification';
+import { useSecurity } from '@/contexts/SecurityContext';
 
 const threatConfig = {
   safe: {
@@ -73,7 +75,9 @@ const NFTDetail = () => {
   // Wallet and purchase functionality
   const { wallet, connect, executeBuyTransaction, validateSufficientBalance, calculateMarketplaceFee, refreshBalance } = useWallet();
   const { toast } = useToast();
+  const { securitySettings } = useSecurity();
   const [isBuying, setIsBuying] = useState(false);
+  const [showMasterPasswordDialog, setShowMasterPasswordDialog] = useState(false);
 
   if (isLoading || analysisLoading || similarLoading) {
     return (
@@ -188,6 +192,17 @@ const NFTDetail = () => {
       return;
     }
 
+    // Check if master password verification is required for purchases
+    if (securitySettings.requireMasterPasswordForPurchase) {
+      setShowMasterPasswordDialog(true);
+      return;
+    }
+
+    // Proceed with purchase if no master password required
+    await executePurchase();
+  };
+
+  const executePurchase = async () => {
     if (!nft.price || nft.price <= 0) {
       toast({
         title: "Purchase Error",
@@ -342,6 +357,16 @@ const NFTDetail = () => {
     } finally {
       setIsBuying(false);
     }
+  };
+
+  const handleMasterPasswordSuccess = () => {
+    setShowMasterPasswordDialog(false);
+    // Proceed with purchase after master password verification
+    executePurchase();
+  };
+
+  const handleMasterPasswordClose = () => {
+    setShowMasterPasswordDialog(false);
   };
 
   return (
@@ -1102,6 +1127,15 @@ const NFTDetail = () => {
           </div>
         </div>
       </div>
+
+      {/* Master Password Verification Dialog */}
+      <MasterPasswordVerification
+        isOpen={showMasterPasswordDialog}
+        onClose={handleMasterPasswordClose}
+        onSuccess={handleMasterPasswordSuccess}
+        title="Master Password Required"
+        description="Please enter your master password to complete this purchase."
+      />
     </div>
   );
 };
