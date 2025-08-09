@@ -255,6 +255,112 @@
     animation: scan-line 2s linear infinite;
   }
 
+  /* Enhanced hover and animation utilities */
+  .hover-3d {
+    transform-style: preserve-3d;
+    transition: transform 0.3s ease;
+  }
+
+  .hover-3d:hover {
+    transform: perspective(1000px) rotateX(5deg) rotateY(5deg) translateZ(20px);
+  }
+
+  .cyber-glow-hover {
+    transition: all 0.3s ease;
+  }
+
+  .cyber-glow-hover:hover {
+    filter: drop-shadow(0 0 10px currentColor) drop-shadow(0 0 20px currentColor);
+  }
+
+  .pulse-neon {
+    animation: pulse-neon 2s ease-in-out infinite alternate;
+  }
+
+  @keyframes pulse-neon {
+    from {
+      text-shadow: 0 0 5px currentColor, 0 0 10px currentColor, 0 0 15px currentColor;
+    }
+    to {
+      text-shadow: 0 0 10px currentColor, 0 0 20px currentColor, 0 0 30px currentColor, 0 0 40px currentColor;
+    }
+  }
+
+  .scale-102 {
+    transform: scale(1.02);
+  }
+
+  /* Additional NFT card animations */
+  .scale-102 {
+    transform: scale(1.02);
+  }
+
+  .nft-hover-glow {
+    transition: all 0.3s ease;
+  }
+
+  .nft-hover-glow:hover {
+    box-shadow: 
+      0 10px 25px -5px rgba(0, 0, 0, 0.1),
+      0 10px 10px -5px rgba(0, 0, 0, 0.04),
+      0 0 20px rgba(59, 130, 246, 0.3),
+      0 0 40px rgba(59, 130, 246, 0.1);
+  }
+
+  .fraud-hover-glow:hover {
+    box-shadow: 
+      0 10px 25px -5px rgba(0, 0, 0, 0.1),
+      0 10px 10px -5px rgba(0, 0, 0, 0.04),
+      0 0 20px rgba(239, 68, 68, 0.4),
+      0 0 40px rgba(239, 68, 68, 0.2);
+  }
+
+  @keyframes float-up {
+    0% {
+      transform: translateY(0) scale(1);
+      opacity: 0.8;
+    }
+    50% {
+      transform: translateY(-20px) scale(1.1);
+      opacity: 1;
+    }
+    100% {
+      transform: translateY(-40px) scale(0.8);
+      opacity: 0;
+    }
+  }
+
+  @keyframes cyber-pulse {
+    0%, 100% {
+      opacity: 0.6;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.05);
+    }
+  }
+
+  @keyframes holographic-shift {
+    0% { filter: hue-rotate(0deg); }
+    25% { filter: hue-rotate(90deg); }
+    50% { filter: hue-rotate(180deg); }
+    75% { filter: hue-rotate(270deg); }
+    100% { filter: hue-rotate(360deg); }
+  }
+
+  .animate-float-up {
+    animation: float-up 3s ease-out infinite;
+  }
+
+  .animate-cyber-pulse {
+    animation: cyber-pulse 2s ease-in-out infinite;
+  }
+
+  .animate-holographic {
+    animation: holographic-shift 4s linear infinite;
+  }
+
   /* Custom animations for hacker components */
   @keyframes pulse-red {
     0%, 100% {

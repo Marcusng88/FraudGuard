@@ -8,6 +8,9 @@ import {
   getNFTAnalysisDetails,
   getSimilarNFTs,
   getMarketplaceStats,
+  getFraudDetectionStats,
+  getRecentFraudAlerts,
+  getRecentNFTsWithAnalysis,
   type NFT,
   type NFTDetailResponse,
   type MarketplaceResponse,
@@ -57,5 +60,35 @@ export const useMarketplaceStats = () => {
     queryFn: () => getMarketplaceStats(),
     staleTime: 60000, // 1 minute
     refetchInterval: 300000, // Refetch every 5 minutes
+  });
+};
+
+// Fraud detection statistics
+export const useFraudDetectionStats = () => {
+  return useQuery({
+    queryKey: ['fraud-detection', 'stats'],
+    queryFn: () => getFraudDetectionStats(),
+    staleTime: 30000, // 30 seconds
+    refetchInterval: 60000, // Refetch every minute
+  });
+};
+
+// Recent fraud alerts
+export const useRecentFraudAlerts = (limit: number = 3) => {
+  return useQuery({
+    queryKey: ['fraud-alerts', 'recent', limit],
+    queryFn: () => getRecentFraudAlerts(limit),
+    staleTime: 15000, // 15 seconds
+    refetchInterval: 30000, // Refetch every 30 seconds
+  });
+};
+
+// Recent NFTs with fraud analysis for dashboard
+export const useRecentNFTsWithAnalysis = (limit: number = 3) => {
+  return useQuery({
+    queryKey: ['nfts', 'recent-with-analysis', limit],
+    queryFn: () => getRecentNFTsWithAnalysis(limit),
+    staleTime: 15000, // 15 seconds
+    refetchInterval: 30000, // Refetch every 30 seconds
   });
 };

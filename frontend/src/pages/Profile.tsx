@@ -26,7 +26,7 @@ import {
 import { useWallet } from '@/hooks/useWallet';
 import { ListingManager } from '@/components/ListingManager';
 import { MyNFTs } from '@/components/MyNFTs';
-import { useUserListings, useMarketplaceAnalytics, useUpdateListing, useDeleteListing, useUnlistNFT } from '@/hooks/useListings';
+import { useUserListings, useMarketplaceAnalytics } from '@/hooks/useListings';
 import { useUserProfile, useUpdateUserProfile } from '@/hooks/useProfile';
 import { useNavigate } from 'react-router-dom';
 import { EditListingDialog } from '@/components/EditListingDialog';
@@ -50,9 +50,6 @@ const Profile = () => {
   const { data: analytics } = useMarketplaceAnalytics('24h');
 
   // Mutations
-  const updateListingMutation = useUpdateListing();
-  const deleteListingMutation = useDeleteListing();
-  const unlistNFTMutation = useUnlistNFT();
   const updateProfileMutation = useUpdateUserProfile();
 
   // Auto-refresh balance when profile loads
@@ -69,8 +66,20 @@ const Profile = () => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
   };
 
+  // Helper functions for formatting numbers
   const formatBalance = (balance: number) => {
     return `${balance.toFixed(2)} SUI`;
+  };
+
+  const formatCurrency = (amount: number) => {
+    // Handle floating point precision issues
+    const rounded = Math.round(amount * 100) / 100;
+    return rounded.toFixed(2);
+  };
+
+  const formatCurrencyDisplay = (amount: number) => {
+    const formatted = formatCurrency(amount);
+    return `${formatted} SUI`;
   };
 
   const handleRefreshBalance = useCallback(async () => {
@@ -106,36 +115,6 @@ const Profile = () => {
         localStorage.removeItem(`avatar_${wallet.address}`);
         setUserAvatar(null);
       }
-    }
-  };
-
-  const handleViewNFT = (nftId: string) => {
-    navigate(`/nft/${nftId}`);
-  };
-
-  const handleEditListing = async (listingId: string, newPrice: number) => {
-    if (!wallet?.address) return;
-
-    try {
-      await updateListingMutation.mutateAsync({
-        listing_id: listingId,
-        price: newPrice
-      });
-    } catch (error) {
-      console.error('Failed to update listing:', error);
-    }
-  };
-
-  const handleUnlistNFT = async (nftId: string) => {
-    if (!wallet?.address) return;
-
-    try {
-      await unlistNFTMutation.mutateAsync({
-        nftId,
-        walletAddress: wallet.address
-      });
-    } catch (error) {
-      console.error('Failed to unlist NFT:', error);
     }
   };
 
@@ -318,7 +297,7 @@ const Profile = () => {
                 {
                   icon: Clock,
                   title: 'Total Volume',
-                  value: `${userListings?.reduce((sum, l) => sum + l.price, 0) || 0} SUI`,
+                  value: formatCurrencyDisplay(userListings?.reduce((sum, l) => sum + l.price, 0) || 0),
                   color: 'text-secondary',
                   gradient: 'from-secondary/20 to-secondary/5'
                 },
@@ -380,7 +359,7 @@ const Profile = () => {
                               {listing.nft_title || 'Untitled NFT'}
                             </p>
                             <p className="text-sm text-muted-foreground">
-                              Listed for {listing.price} SUI
+                              Listed for {formatCurrency(listing.price)} SUI
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
@@ -425,7 +404,7 @@ const Profile = () => {
                           <DollarSign className="w-5 h-5 text-primary" />
                           <span className="text-foreground">Total Volume</span>
                         </div>
-                        <span className="font-semibold neon-text">{analytics?.total_volume || 0} SUI</span>
+                        <span className="font-semibold neon-text">{formatCurrency(analytics?.total_volume || 0)} SUI</span>
                       </div>
                       
                       <div className="flex items-center justify-between p-3 glass-panel rounded-lg">
@@ -441,11 +420,7 @@ const Profile = () => {
               </TabsContent>
               
               <TabsContent value="listings">
-                <EnhancedListingManager 
-                  onViewNFT={handleViewNFT}
-                  onEditListing={handleEditListing}
-                  onUnlistNFT={handleUnlistNFT}
-                />
+                <ListingManager />
               </TabsContent>
               
               <TabsContent value="nfts">
@@ -511,123 +486,6 @@ const Profile = () => {
           </div>
         </div>
       </div>
-    </div>
-  );
-};
-
-// Enhanced Listing Manager Component
-const EnhancedListingManager = ({ 
-  onViewNFT, 
-  onEditListing, 
-  onUnlistNFT 
-}: {
-  onViewNFT: (nftId: string) => void;
-  onEditListing: (listingId: string, newPrice: number) => void;
-  onUnlistNFT: (nftId: string) => void;
-}) => {
-  const { wallet } = useWallet();
-  const navigate = useNavigate();
-
-  const { data: userListings, isLoading } = useUserListings(wallet?.address || '');
-
-  const handleEditSuccess = () => {
-    // Refetch listings after successful edit
-    // The mutation will automatically invalidate queries
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        <span className="ml-2 text-muted-foreground">Loading your listings...</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-2xl font-bold text-foreground neon-text">My Listings</h2>
-          <p className="text-muted-foreground">
-            Manage your NFT listings and track their performance
-          </p>
-        </div>
-      </div>
-
-      {userListings && userListings.length > 0 ? (
-        <div className="grid gap-4">
-          {userListings.map((listing) => (
-            <Card key={listing.id} className="glass-panel p-4 hover-glow">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <img 
-                    src={listing.nft_image_url || '/placeholder-nft.png'} 
-                    alt={listing.nft_title || 'NFT'}
-                    className="w-16 h-16 object-cover rounded border border-border/30"
-                  />
-                  <div>
-                    <h3 className="font-semibold text-foreground">
-                      {listing.nft_title || 'Untitled NFT'}
-                    </h3>
-                    <p className="text-sm text-muted-foreground">
-                      Listed for {listing.price} SUI
-                    </p>
-                    <Badge variant={listing.status === 'active' ? 'default' : 'secondary'} className="glass-panel">
-                      {listing.status}
-                    </Badge>
-                  </div>
-                </div>
-                
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => onViewNFT(listing.nft_id)}
-                    className="glass-panel hover:bg-primary/20 hover:border-primary/50"
-                  >
-                    <Eye className="w-4 h-4 mr-1" />
-                    View
-                  </Button>
-                  
-                  {listing.status === 'active' && (
-                    <>
-                      <EditListingDialog 
-                        listing={listing}
-                        onSuccess={handleEditSuccess}
-                      />
-                      
-                      <Button
-                        variant="destructive"
-                        size="sm"
-                        onClick={() => onUnlistNFT(listing.nft_id)}
-                        className="hover:scale-105 transition-transform"
-                      >
-                        <Trash2 className="w-4 h-4 mr-1" />
-                        Unlist
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      ) : (
-        <div className="text-center py-12">
-          <div className="glass-panel p-8 max-w-md mx-auto hover-glow">
-            <TrendingUp className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">No Listings Yet</h3>
-            <p className="text-muted-foreground mb-4">
-              You haven't created any listings yet. List your NFTs to start selling.
-            </p>
-            <Button onClick={() => navigate('/create')} variant="cyber" className="hover:scale-105 transition-transform neon-text">
-              <Plus className="w-4 h-4 mr-2" />
-              Create Your First NFT
-            </Button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

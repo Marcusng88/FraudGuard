@@ -96,6 +96,10 @@ export interface MarketplaceStats {
   total_volume: number;
   average_price: number;
   fraud_detection_rate: number;
+  flagged_nfts?: number;
+  threats_blocked?: number;
+  detection_accuracy?: number;
+  analyzed_nfts?: number;
 }
 
 export interface NFTCreationRequest {
@@ -195,6 +199,64 @@ export async function getMarketplaceStats(): Promise<MarketplaceStats> {
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.detail || 'Failed to fetch marketplace stats');
+  }
+
+  return response.json();
+}
+
+export async function getFraudDetectionStats(): Promise<{
+  total_analyzed: number;
+  total_flagged: number;
+  detection_accuracy: number;
+  protection_rate: number;
+  recent_threats_30d: number;
+  recent_threats_7d: number;
+  ai_uptime: number;
+  high_confidence_detections: number;
+  threat_prevention_score: number;
+  value_protected: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/fraud-stats`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch fraud detection stats');
+  }
+
+  return response.json();
+}
+
+export async function getRecentFraudAlerts(limit: number = 3): Promise<{
+  alerts: Array<{
+    severity: 'critical' | 'high' | 'medium' | 'low';
+    title: string;
+    description: string;
+    timestamp: string;
+    nft_id: string;
+    confidence_score: number;
+    nft_title: string;
+  }>;
+  total: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/recent-alerts?limit=${limit}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch recent fraud alerts');
+  }
+
+  return response.json();
+}
+
+export async function getRecentNFTsWithAnalysis(limit: number = 3): Promise<{
+  nfts: NFT[];
+  total: number;
+}> {
+  const response = await fetch(`${API_BASE_URL}/api/marketplace/recent-nfts-with-analysis?limit=${limit}`);
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to fetch recent NFTs with analysis');
   }
 
   return response.json();
