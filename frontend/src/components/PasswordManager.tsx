@@ -786,26 +786,36 @@ export function PasswordManager({ className }: PasswordManagerProps) {
                               <span className="font-medium">Password:</span>
                               <div className="flex items-center gap-2">
                                 <span className="font-mono">
-                                  {showPasswords[password.id] ? password.password : "••••••••"}
-                                </span>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => togglePasswordVisibility(password.id)}
-                                >
-                                  {showPasswords[password.id] ? (
-                                    <EyeOff className="h-3 w-3" />
+                                  {password.password === '[ENCRYPTED]' ? (
+                                    <span className="text-orange-600 font-medium">[ENCRYPTED]</span>
+                                  ) : showPasswords[password.id] ? (
+                                    password.password
                                   ) : (
-                                    <Eye className="h-3 w-3" />
+                                    "••••••••"
                                   )}
-                                </Button>
-                                <Button
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => copyToClipboard(password.password, "Password")}
-                                >
-                                  <Copy className="h-3 w-3" />
-                                </Button>
+                                </span>
+                                {password.password !== '[ENCRYPTED]' && (
+                                  <>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => togglePasswordVisibility(password.id)}
+                                    >
+                                      {showPasswords[password.id] ? (
+                                        <EyeOff className="h-3 w-3" />
+                                      ) : (
+                                        <Eye className="h-3 w-3" />
+                                      )}
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      onClick={() => copyToClipboard(password.password, "Password")}
+                                    >
+                                      <Copy className="h-3 w-3" />
+                                    </Button>
+                                  </>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -824,7 +834,13 @@ export function PasswordManager({ className }: PasswordManagerProps) {
                           )}
                           {password.notes && (
                             <div className="mt-2 text-sm text-gray-500">
-                              <span className="font-medium">Notes:</span> {password.notes}
+                              <span className="font-medium">Notes:</span> {
+                                password.notes === '[ENCRYPTED]' ? (
+                                  <span className="text-orange-600 font-medium">[ENCRYPTED]</span>
+                                ) : (
+                                  password.notes
+                                )
+                              }
                             </div>
                           )}
                         </div>

@@ -3,11 +3,13 @@ import { CyberNavigation } from '@/components/CyberNavigation';
 import { FloatingWarningIcon } from '@/components/FloatingWarningIcon';
 import { PasswordManager } from '@/components/PasswordManager';
 import { ChangeMasterPasswordDialog } from '@/components/ChangeMasterPasswordDialog';
+import { MasterPasswordVerification } from '@/components/MasterPasswordVerification';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Switch } from '@/components/ui/switch';
 import { 
   Shield, 
   Lock, 
@@ -40,11 +42,16 @@ import {
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
 import { useAuth } from '@/contexts/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 
 export default function SecuritySettings() {
   const { wallet } = useWallet();
   const { isAuthenticated } = useAuth();
+  const { toast } = useToast();
   const [activeTab, setActiveTab] = useState('overview');
+  const [isMasterPasswordVerified, setIsMasterPasswordVerified] = useState(false);
+  const [showMasterPasswordDialog, setShowMasterPasswordDialog] = useState(false);
+  const [requireMasterPassword, setRequireMasterPassword] = useState(true);
 
   // Security status states
   const [securityStatus, setSecurityStatus] = useState({
@@ -118,6 +125,48 @@ export default function SecuritySettings() {
     }
   }, [wallet]);
 
+  // Load master password requirement setting from localStorage
+  useEffect(() => {
+    const savedRequirement = localStorage.getItem('fraudguard-require-master-password');
+    if (savedRequirement !== null) {
+      setRequireMasterPassword(JSON.parse(savedRequirement));
+    }
+  }, []);
+
+  // Check if master password verification is needed when component mounts
+  useEffect(() => {
+    if (isAuthenticated && !isMasterPasswordVerified && requireMasterPassword) {
+      setShowMasterPasswordDialog(true);
+    }
+  }, [isAuthenticated, isMasterPasswordVerified, requireMasterPassword]);
+
+  const handleMasterPasswordSuccess = () => {
+    setIsMasterPasswordVerified(true);
+    setShowMasterPasswordDialog(false);
+  };
+
+  const handleMasterPasswordClose = () => {
+    setShowMasterPasswordDialog(false);
+  };
+
+  const handleMasterPasswordToggle = (checked: boolean) => {
+    setRequireMasterPassword(checked);
+    localStorage.setItem('fraudguard-require-master-password', JSON.stringify(checked));
+    
+    // If turning off master password requirement, automatically verify
+    if (!checked) {
+      setIsMasterPasswordVerified(true);
+    }
+    
+    // Show toast notification
+    toast({
+      title: checked ? "🔐 Master Password Required" : "🔓 Master Password Optional",
+      description: checked 
+        ? "Master password verification is now required to access security settings."
+        : "Master password verification is now optional for security settings.",
+    });
+  };
+
   const getSeverityColor = (severity: string) => {
     switch (severity) {
       case 'info':
@@ -173,6 +222,48 @@ export default function SecuritySettings() {
             <p className="text-gray-500">Please connect your wallet to access security settings</p>
           </div>
         </div>
+      </div>
+    );
+  }
+
+  // Show master password verification dialog if not verified and required
+  if (!isMasterPasswordVerified && requireMasterPassword) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900">
+        <CyberNavigation />
+        <FloatingWarningIcon />
+        
+        <div className="container mx-auto px-4 py-8">
+          <div className="mb-8">
+            <h1 className="text-4xl font-bold text-white mb-2">Security Settings</h1>
+            <p className="text-gray-300">Manage your account security and privacy settings</p>
+          </div>
+
+          <Card className="bg-gray-800/50 border-gray-700 max-w-md mx-auto">
+            <div className="p-6 text-center">
+              <Lock className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+              <h3 className="text-lg font-semibold text-white mb-2">Master Password Required</h3>
+              <p className="text-gray-400 mb-4">
+                To access security settings, please verify your master password.
+              </p>
+              <Button 
+                onClick={() => setShowMasterPasswordDialog(true)}
+                className="w-full"
+              >
+                <Lock className="h-4 w-4 mr-2" />
+                Enter Master Password
+              </Button>
+            </div>
+          </Card>
+        </div>
+
+        <MasterPasswordVerification
+          isOpen={showMasterPasswordDialog}
+          onClose={handleMasterPasswordClose}
+          onSuccess={handleMasterPasswordSuccess}
+          title="Master Password Required"
+          description="Please enter your master password to access security settings."
+        />
       </div>
     );
   }
@@ -405,6 +496,18 @@ export default function SecuritySettings() {
               <div className="p-6">
                 <h3 className="text-xl font-semibold text-white mb-4">Advanced Security Settings</h3>
                 <div className="space-y-4">
+                  <div className="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg">
+                    <div>
+                      <h4 className="text-white font-medium">Master Password Requirement</h4>
+                      <p className="text-gray-400 text-sm">Require master password verification to access security settings</p>
+                    </div>
+                    <Switch
+                      checked={requireMasterPassword}
+                      onCheckedChange={handleMasterPasswordToggle}
+                      className="data-[state=checked]:bg-purple-600"
+                    />
+                  </div>
+                  
                   <div className="flex items-center justify-between p-4 bg-gray-700/50 rounded-lg">
                     <div>
                       <h4 className="text-white font-medium">Master Password Management</h4>

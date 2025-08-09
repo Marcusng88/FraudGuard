@@ -542,7 +542,17 @@ export class RealWalrusSealPasswordManager {
       throw new Error("Wallet address mismatch");
     }
 
-    const masterPassword = this.getMasterPassword();
+    // Get or validate master password
+    let masterPassword = this.getMasterPassword();
+    
+    // If no master password is stored, we need to prompt the user
+    if (!masterPassword || masterPassword === 'default-master-password') {
+      console.warn('⚠️ No master password found, import may fail for encrypted data');
+      // For now, we'll try to proceed with the default password
+      masterPassword = 'default-master-password';
+    }
+    
+    console.log('🔐 Importing vault with master password:', masterPassword ? 'available' : 'missing');
 
     // Decrypt sensitive data if encrypted
     const decryptedPasswords = data.vault.passwords.map((p: any) => {
@@ -555,15 +565,28 @@ export class RealWalrusSealPasswordManager {
       // Check if sensitive data is encrypted
       if (p.encryptedData && (p.password === '[ENCRYPTED]' || p.notes === '[ENCRYPTED]')) {
         try {
+          console.log('🔓 Attempting to decrypt sensitive data for password:', password.title);
           const decryptedSensitive = this.decryptFromImport(p.encryptedData, masterPassword);
-          password.password = decryptedSensitive.password;
-          password.notes = decryptedSensitive.notes;
-          delete password.encryptedData; // Remove encrypted data from imported password
-          console.log('🔓 Decrypted sensitive data for password:', password.title);
+          
+          if (decryptedSensitive && decryptedSensitive.password) {
+            password.password = decryptedSensitive.password;
+            password.notes = decryptedSensitive.notes || '';
+            delete password.encryptedData; // Remove encrypted data from imported password
+            console.log('✅ Successfully decrypted sensitive data for password:', password.title);
+          } else {
+            console.warn('⚠️ Decrypted data is empty or invalid for password:', password.title);
+            // Keep the encrypted placeholders if decryption fails
+            password.password = '[ENCRYPTED]';
+            password.notes = '[ENCRYPTED]';
+          }
         } catch (error) {
-          console.warn('⚠️ Failed to decrypt sensitive data for password:', password.title, error);
-          // Keep encrypted data if decryption fails
+          console.error('❌ Failed to decrypt sensitive data for password:', password.title, error);
+          // Keep the encrypted placeholders if decryption fails
+          password.password = '[ENCRYPTED]';
+          password.notes = '[ENCRYPTED]';
         }
+      } else {
+        console.log('📝 Password has no encrypted data, using as-is:', password.title);
       }
 
       return password;
@@ -584,7 +607,7 @@ export class RealWalrusSealPasswordManager {
     };
 
     this.saveVaultToStorage();
-    console.log('✅ Vault imported successfully with decrypted sensitive data');
+    console.log('✅ Vault imported successfully with', decryptedPasswords.length, 'passwords');
   }
 
   // Reset vault and create new one with sample data
@@ -739,14 +762,26 @@ export class RealWalrusSealPasswordManager {
   // Decrypt sensitive data from import
   private decryptFromImport(encryptedData: string, masterPassword: string): any {
     try {
+      console.log('🔍 Attempting to decrypt data with length:', encryptedData.length);
+      
       // First, try to parse as JSON (AES encrypted data)
       try {
         const data = JSON.parse(encryptedData);
+        console.log('🔍 Detected JSON format, checking algorithm:', data.algorithm);
         
         if (data.algorithm === 'AES-256-CBC') {
           // Decrypt AES-256-CBC encrypted data
-          const salt = CryptoJS.enc.Hex.parse(data.salt);
-          const iv = CryptoJS.enc.Hex.parse(data.iv);
+          let salt, iv;
+          
+          try {
+            salt = CryptoJS.enc.Hex.parse(data.salt);
+            iv = CryptoJS.enc.Hex.parse(data.iv);
+          } catch (parseError) {
+            console.warn('⚠️ Failed to parse salt/iv as hex, trying alternative parsing');
+            salt = CryptoJS.enc.Utf8.parse(data.salt);
+            iv = CryptoJS.enc.Utf8.parse(data.iv);
+          }
+          
           const key = CryptoJS.PBKDF2(masterPassword, salt, {
             keySize: 256/32,
             iterations: 1000
@@ -759,11 +794,26 @@ export class RealWalrusSealPasswordManager {
           });
 
           const decryptedString = decrypted.toString(CryptoJS.enc.Utf8);
+          if (!decryptedString) {
+            throw new Error('Decryption resulted in empty string');
+          }
+          
           console.log('🔓 Successfully decrypted AES-256-CBC data');
           return JSON.parse(decryptedString);
         } else if (data.algorithm === 'AES-256-ECB') {
           // Decrypt AES-256-ECB encrypted data (fallback method)
-          const salt = data.salt === 'fraudguard-salt' ? 'fraudguard-salt' : CryptoJS.enc.Hex.parse(data.salt);
+          let salt;
+          
+          if (data.salt === 'fraudguard-salt') {
+            salt = 'fraudguard-salt';
+          } else {
+            try {
+              salt = CryptoJS.enc.Hex.parse(data.salt);
+            } catch (parseError) {
+              salt = CryptoJS.enc.Utf8.parse(data.salt);
+            }
+          }
+          
           const key = CryptoJS.PBKDF2(masterPassword, salt, {
             keySize: 256/32,
             iterations: 1000
@@ -771,11 +821,21 @@ export class RealWalrusSealPasswordManager {
 
           const decrypted = CryptoJS.AES.decrypt(data.encrypted, key);
           const decryptedString = decrypted.toString(CryptoJS.enc.Utf8);
+          if (!decryptedString) {
+            throw new Error('Decryption resulted in empty string');
+          }
+          
           console.log('🔓 Successfully decrypted AES-256-ECB data');
           return JSON.parse(decryptedString);
         } else if (data.algorithm === 'AES-256-GCM') {
           // Legacy support for GCM encrypted data
-          const salt = CryptoJS.enc.Hex.parse(data.salt);
+          let salt;
+          try {
+            salt = CryptoJS.enc.Hex.parse(data.salt);
+          } catch (parseError) {
+            salt = CryptoJS.enc.Utf8.parse(data.salt);
+          }
+          
           const key = CryptoJS.PBKDF2(masterPassword, salt, {
             keySize: 256/32,
             iterations: 1000
@@ -787,8 +847,15 @@ export class RealWalrusSealPasswordManager {
           });
 
           const decryptedString = decrypted.toString(CryptoJS.enc.Utf8);
+          if (!decryptedString) {
+            throw new Error('Decryption resulted in empty string');
+          }
+          
           console.log('🔓 Successfully decrypted legacy AES-256-GCM data');
           return JSON.parse(decryptedString);
+        } else {
+          console.warn('⚠️ Unknown encryption algorithm:', data.algorithm);
+          throw new Error(`Unsupported encryption algorithm: ${data.algorithm}`);
         }
       } catch (jsonError) {
         console.log('🔍 JSON parsing failed, checking if base64 encoded data');
@@ -805,8 +872,8 @@ export class RealWalrusSealPasswordManager {
         throw new Error('Failed to decrypt data - unsupported encryption format');
       }
     } catch (error) {
-      console.warn('⚠️ Decryption failed:', error);
-      throw new Error('Failed to decrypt imported data');
+      console.error('❌ Decryption failed:', error);
+      throw new Error(`Failed to decrypt imported data: ${error.message}`);
     }
   }
 
