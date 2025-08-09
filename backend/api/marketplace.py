@@ -102,19 +102,22 @@ class MarketplaceStats(BaseModel):
     average_price: float
     fraud_detection_rate: float
 
-# Import fraud detection functionality
+# Import fraud detection functionality and blockchain services
 try:
     from agent.fraud_detector import analyze_nft_for_fraud, NFTData
     from agent.sui_client import sui_client
+    from agent.blockchain_listing_service import get_blockchain_listing_service
 except ImportError:
     try:
         from backend.agent.fraud_detector import analyze_nft_for_fraud, NFTData
         from backend.agent.sui_client import sui_client
+        from backend.agent.blockchain_listing_service import get_blockchain_listing_service
     except ImportError:
         # Fallback for development
         analyze_nft_for_fraud = None
         NFTData = None
         sui_client = None
+        get_blockchain_listing_service = None
 
 # Request models
 class NFTCreationRequest(BaseModel):
@@ -126,6 +129,37 @@ class NFTCreationRequest(BaseModel):
     image_url: str
     wallet_address: str
     sui_object_id: Optional[str] = None
+
+class BlockchainListingRequest(BaseModel):
+    """Request model for blockchain listing creation"""
+    nft_id: str
+    seller_wallet_address: str
+    price: float
+    blockchain_tx_id: str
+    marketplace_object_id: Optional[str] = None
+
+class BlockchainPurchaseRequest(BaseModel):
+    """Request model for blockchain purchase completion"""
+    nft_id: str
+    buyer_wallet_address: str
+    seller_wallet_address: str
+    price: float
+    blockchain_tx_id: str
+    marketplace_fee: float
+    gas_fee: Optional[float] = None
+
+class BlockchainCancelRequest(BaseModel):
+    """Request model for blockchain listing cancellation"""
+    nft_id: str
+    seller_wallet_address: str
+    blockchain_tx_id: str
+
+class BlockchainPriceUpdateRequest(BaseModel):
+    """Request model for blockchain price update"""
+    nft_id: str
+    seller_wallet_address: str
+    new_price: float
+    blockchain_tx_id: str
 
 router = APIRouter(prefix="/api/marketplace", tags=["marketplace"])
 
@@ -751,3 +785,179 @@ async def run_fraud_analysis(nft_id: str, image_url: str, title: str, descriptio
             
     except Exception as e:
         print(f"Error in fraud analysis for {nft_id}: {e}")
+
+
+# Blockchain Integration Endpoints
+
+@router.post("/blockchain/list-nft")
+async def create_blockchain_listing(
+    request: BlockchainListingRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Create a listing in the database after successful blockchain listing transaction
+    This endpoint is called after the marketplace smart contract successfully lists an NFT
+    """
+    try:
+        if not get_blockchain_listing_service:
+            raise HTTPException(status_code=501, detail="Blockchain service not available")
+        
+        blockchain_service = get_blockchain_listing_service(db)
+        
+        result = await blockchain_service.create_listing_with_blockchain(
+            nft_id=request.nft_id,
+            seller_wallet_address=request.seller_wallet_address,
+            price=request.price,
+            blockchain_tx_id=request.blockchain_tx_id,
+            marketplace_object_id=request.marketplace_object_id
+        )
+        
+        return {
+            "success": True,
+            "message": "Blockchain listing created successfully",
+            **result
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error creating blockchain listing: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/blockchain/purchase-nft")
+async def complete_blockchain_purchase(
+    request: BlockchainPurchaseRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Complete a purchase in the database after successful blockchain purchase transaction
+    This endpoint is called after the marketplace smart contract successfully transfers ownership
+    """
+    try:
+        if not get_blockchain_listing_service:
+            raise HTTPException(status_code=501, detail="Blockchain service not available")
+        
+        blockchain_service = get_blockchain_listing_service(db)
+        
+        result = await blockchain_service.complete_purchase_with_blockchain(
+            nft_id=request.nft_id,
+            buyer_wallet_address=request.buyer_wallet_address,
+            seller_wallet_address=request.seller_wallet_address,
+            price=request.price,
+            blockchain_tx_id=request.blockchain_tx_id,
+            marketplace_fee=request.marketplace_fee,
+            gas_fee=request.gas_fee
+        )
+        
+        return {
+            "success": True,
+            "message": "Blockchain purchase completed successfully",
+            **result
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error completing blockchain purchase: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/blockchain/cancel-listing")
+async def cancel_blockchain_listing(
+    request: BlockchainCancelRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Cancel a listing in the database after successful blockchain unlisting transaction
+    This endpoint is called after the marketplace smart contract successfully returns NFT to owner
+    """
+    try:
+        if not get_blockchain_listing_service:
+            raise HTTPException(status_code=501, detail="Blockchain service not available")
+        
+        blockchain_service = get_blockchain_listing_service(db)
+        
+        result = await blockchain_service.cancel_listing_with_blockchain(
+            nft_id=request.nft_id,
+            seller_wallet_address=request.seller_wallet_address,
+            blockchain_tx_id=request.blockchain_tx_id
+        )
+        
+        return {
+            "success": True,
+            "message": "Blockchain listing cancelled successfully",
+            **result
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error cancelling blockchain listing: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.post("/blockchain/update-price")
+async def update_blockchain_listing_price(
+    request: BlockchainPriceUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Update listing price in the database after successful blockchain price update transaction
+    This endpoint is called after the marketplace smart contract successfully updates the listing price
+    """
+    try:
+        if not get_blockchain_listing_service:
+            raise HTTPException(status_code=501, detail="Blockchain service not available")
+        
+        blockchain_service = get_blockchain_listing_service(db)
+        
+        result = await blockchain_service.update_listing_price_with_blockchain(
+            nft_id=request.nft_id,
+            seller_wallet_address=request.seller_wallet_address,
+            new_price=request.new_price,
+            blockchain_tx_id=request.blockchain_tx_id
+        )
+        
+        return {
+            "success": True,
+            "message": "Blockchain listing price updated successfully",
+            **result
+        }
+        
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error updating blockchain listing price: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
+
+@router.get("/blockchain/listing/{nft_id}")
+async def get_blockchain_listing_info(
+    nft_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get blockchain listing information for an NFT
+    Returns blockchain metadata and listing status
+    """
+    try:
+        if not get_blockchain_listing_service:
+            raise HTTPException(status_code=501, detail="Blockchain service not available")
+        
+        blockchain_service = get_blockchain_listing_service(db)
+        listing_info = blockchain_service.get_listing_by_nft_id(nft_id)
+        
+        if not listing_info:
+            raise HTTPException(status_code=404, detail="No active listing found for this NFT")
+        
+        return {
+            "success": True,
+            "listing": listing_info
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting blockchain listing info: {e}")
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")

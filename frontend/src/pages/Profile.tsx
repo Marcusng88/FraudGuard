@@ -29,7 +29,9 @@ import { MyNFTs } from '@/components/MyNFTs';
 import { useUserListings, useMarketplaceAnalytics, useUpdateListing } from '@/hooks/useListings';
 import { useUserProfile, useUpdateUserProfile } from '@/hooks/useProfile';
 import { confirmUnlisting } from '@/lib/api';
+import { getSuiClient } from '@/lib/blockchain-utils';
 import { useToast } from '@/hooks/use-toast';
+import { useSuiClient } from '@mysten/dapp-kit';
 import { useNavigate } from 'react-router-dom';
 import { EditListingDialog } from '@/components/EditListingDialog';
 import { ProfileEditDialog } from '@/components/ProfileEditDialog';
@@ -42,6 +44,7 @@ const Profile = () => {
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
   const navigate = useNavigate();
   const { toast } = useToast();
+  const suiClient = useSuiClient();
 
   // Fetch user's listings
   const { data: userListings } = useUserListings(wallet?.address || '');
@@ -156,8 +159,12 @@ const Profile = () => {
 
       // Extract blockchain_listing_id from metadata
       // The blockchain listing ID is the Sui object ID of the Listing object created by list_nft_simple
-      const blockchainListingId = listing.listing_metadata?.blockchain_listing_id ||
-                                  listing.metadata?.blockchain_listing_id;
+      let blockchainListingId = listing.listing_metadata?.blockchain_listing_id ||
+                                listing.metadata?.blockchain_listing_id;
+
+      // Check if we have a blockchain transaction but no listing ID extracted
+      const blockchainTxId = listing.listing_metadata?.blockchain_tx_id;
+      const hasBlockchainTransaction = blockchainTxId && blockchainTxId !== 'database-only-unlisting';
 
       if (!blockchainListingId || typeof blockchainListingId !== 'string') {
         console.error('No blockchain listing ID found in listing metadata');
@@ -165,39 +172,53 @@ const Profile = () => {
           id: listing.id,
           nft_id: listing.nft_id,
           metadata: listing.metadata,
-          listing_metadata: listing.listing_metadata
+          listing_metadata: listing.listing_metadata,
+          hasBlockchainTransaction,
+          blockchainTxId
         });
 
-        // Check if this is an old listing created via database-first flow
-        const createdVia = listing.listing_metadata?.created_via;
-        if (createdVia === 'my_nfts_component' || createdVia === 'listing_flow_demo' || !createdVia) {
-          console.log('Detected old database-only listing, performing database-only unlisting...');
-
-          toast({
-            title: "Unlisting (Database Only)...",
-            description: "This listing was never on the blockchain, removing from database only",
-          });
-
-          // For old listings, just update the database since they were never on blockchain
-          await confirmUnlisting(
-            listingId, // Database listing ID
-            'database-only-unlisting', // Fake transaction ID for old listings
-            0 // No gas fee
-          );
-
-          toast({
-            title: "NFT Unlisted Successfully! ✅",
-            description: "Your NFT has been removed from the marketplace (database only)",
-          });
-
-          return; // Exit early for database-only unlisting
+        // Check if we have blockchain listing information in the new marketplace system
+        if (hasBlockchainTransaction) {
+          console.log('Found blockchain transaction in listing metadata');
+          // In the new escrow marketplace system, the blockchain data is already in listing_metadata
+          if (listing.listing_metadata?.blockchain_listing_id) {
+            blockchainListingId = listing.listing_metadata.blockchain_listing_id;
+          }
         }
 
-        throw new Error(
-          'Blockchain listing ID not found. This listing was not created through the blockchain-first flow. ' +
-          'Only listings created on the blockchain can be unlisted. Please use the CompleteListingFlow component ' +
-          'to create blockchain-compatible listings.'
-        );
+        // If we still don't have a blockchain listing ID, check for database-only listing
+        if (!blockchainListingId) {
+          const createdVia = listing.listing_metadata?.created_via;
+          if (createdVia === 'my_nfts_component' || createdVia === 'listing_flow_demo' || !createdVia || !hasBlockchainTransaction) {
+            console.log('Detected database-only listing, performing database-only unlisting...');
+
+            toast({
+              title: "Unlisting (Database Only)...",
+              description: hasBlockchainTransaction 
+                ? "Could not extract blockchain listing ID, removing from database only" 
+                : "This listing was never on the blockchain, removing from database only",
+            });
+
+            // For old listings, just update the database since they were never on blockchain
+            await confirmUnlisting(
+              listingId, // Database listing ID
+              'database-only-unlisting', // Fake transaction ID for old listings
+              0 // No gas fee
+            );
+
+            toast({
+              title: "NFT Unlisted Successfully! ✅",
+              description: "Your NFT has been removed from the marketplace (database only)",
+            });
+
+            return; // Exit early for database-only unlisting
+          }
+
+          throw new Error(
+            'Blockchain listing ID not found and could not be extracted from transaction. ' +
+            'Unable to unlist from blockchain. Please contact support.'
+          );
+        }
       }
 
       console.log('Using blockchain listing ID:', blockchainListingId);
@@ -210,7 +231,7 @@ const Profile = () => {
       // Step 2: Execute blockchain transaction FIRST
       // This calls cancel_listing_simple(listing_object) where listing_object has the blockchain_listing_id
       const txResult = await executeUnlistNFTTransaction({
-        listingId: blockchainListingId, // This is the Sui object ID of the Listing object
+        nftObjectId: listing.nft_id, // The NFT object ID
         sellerAddress: wallet.address
       });
 
@@ -594,7 +615,7 @@ const EnhancedListingManager = ({
                         {listing.status}
                       </Badge>
                       {/* Show blockchain compatibility indicator */}
-                      {(listing as any).listing_metadata?.blockchain_listing_id ? (
+                      {listing.listing_metadata?.blockchain_listing_id ? (
                         <Badge variant="outline" className="text-green-600 border-green-600">
                           🔗 Blockchain
                         </Badge>

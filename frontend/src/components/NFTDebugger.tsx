@@ -211,7 +211,7 @@ export function NFTDebugger() {
         )}
 
         <div className="text-xs text-muted-foreground space-y-1">
-          <p><strong>Expected Package ID:</strong> 0x7ae460902e9017c7c9a5c898443105435b7393fc5776ace61b2f0c6a1f578381</p>
+          <p><strong>Expected Package ID:</strong> {import.meta.env.VITE_MARKETPLACE_PACKAGE_ID || '0x7ae460902e9017c7c9a5c898443105435b7393fc5776ace61b2f0c6a1f578381'}</p>
           <p><strong>Expected Type:</strong> Should contain "fraudguard_nft::FraudGuardNFT"</p>
           <p><strong>Ownership:</strong> Must be owned by your connected wallet</p>
         </div>

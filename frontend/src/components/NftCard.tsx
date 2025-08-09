@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { NFT } from '@/lib/api';
 import { useWallet } from '@/hooks/useWallet';
-import { recordBlockchainTransaction } from '@/lib/api';
+import { recordBlockchainTransaction, checkNFTListingStatus } from '@/lib/api';
 import { extractPurchaseEventData, getTransactionDetails, MARKETPLACE_OBJECT_ID } from '@/lib/blockchain-utils';
 import { createAnalysisPreview } from '@/lib/text-utils';
 
@@ -115,15 +115,6 @@ export function NftCard({ nft }: NftCardProps) {
       return;
     }
 
-    if (!nft.price || nft.price <= 0) {
-      toast({
-        title: "Purchase Error",
-        description: "NFT price is not available",
-        variant: "destructive"
-      });
-      return;
-    }
-
     if (nft.is_fraud) {
       toast({
         title: "Purchase Blocked",
@@ -147,9 +138,43 @@ export function NftCard({ nft }: NftCardProps) {
     setIsBuying(true);
 
     try {
-      // Validate sufficient balance (including marketplace fee)
-      const totalCost = nft.price + calculateMarketplaceFee(nft.price);
-      console.log(`Total cost: ${totalCost} SUI (Price: ${nft.price} + Fee: ${calculateMarketplaceFee(nft.price)})`);
+      // Step 1: Check if NFT is currently listed in the database
+      console.log('Checking NFT listing status in database...');
+      const listingStatus = await checkNFTListingStatus(nft.id);
+      
+      if (!listingStatus.is_listed) {
+        toast({
+          title: "Purchase Error",
+          description: "This NFT is not currently listed for sale",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      const listingPrice = listingStatus.price || nft.price;
+      const sellerAddress = listingStatus.seller_address || currentOwner;
+
+      if (!listingPrice || listingPrice <= 0) {
+        toast({
+          title: "Purchase Error",
+          description: "NFT price is not available",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      if (!sellerAddress) {
+        toast({
+          title: "Purchase Error",
+          description: "Unable to determine NFT seller",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Step 2: Validate sufficient balance (including marketplace fee)
+      const totalCost = listingPrice + calculateMarketplaceFee(listingPrice);
+      console.log(`Total cost: ${totalCost} SUI (Price: ${listingPrice} + Fee: ${calculateMarketplaceFee(listingPrice)})`);
       
       const balanceCheck = await validateSufficientBalance(totalCost);
       console.log('Balance check result:', balanceCheck);
@@ -163,27 +188,16 @@ export function NftCard({ nft }: NftCardProps) {
         return;
       }
 
-      // Get the seller address (current owner of the NFT)
-      const sellerAddress = currentOwner;
-      if (!sellerAddress) {
-        toast({
-          title: "Purchase Error",
-          description: "Unable to determine NFT owner",
-          variant: "destructive"
-        });
-        return;
-      }
+      console.log(`Initiating purchase from seller: ${sellerAddress} for price: ${listingPrice} SUI`);
 
-      console.log(`Initiating purchase from seller: ${sellerAddress}`);
-
-      // Execute blockchain transaction
+      // Step 3: Execute blockchain transaction using the database-driven approach
       const buyParams = {
         marketplaceId: MARKETPLACE_OBJECT_ID,
-        listingId: nft.id, // Assuming the NFT ID is the listing ID
+        listingId: listingStatus.listing?.id || nft.id, // Use database listing ID
         nftId: nft.sui_object_id || nft.id,
-        price: nft.price,
+        price: listingPrice,
         buyerAddress: wallet.address,
-        sellerAddress: sellerAddress, // Use the determined current owner
+        sellerAddress: sellerAddress,
       };
 
       toast({
@@ -199,26 +213,24 @@ export function NftCard({ nft }: NftCardProps) {
         throw new Error(txResult.error || 'Transaction failed');
       }
 
-      // For the simplified transaction, we'll skip the event extraction for now
-      // and proceed directly to recording the transaction
-      
-      // Record transaction in backend
+      // Step 4: Record transaction in backend and update listing status
+      console.log('Recording transaction in backend...');
       await recordBlockchainTransaction({
         blockchain_tx_id: txResult.txId,
-        listing_id: nft.id,
+        listing_id: listingStatus.listing?.id || nft.id,
         nft_blockchain_id: nft.sui_object_id || nft.id,
         seller_wallet_address: sellerAddress,
         buyer_wallet_address: wallet.address,
-        price: nft.price,
-        marketplace_fee: calculateMarketplaceFee(nft.price),
-        seller_amount: nft.price - calculateMarketplaceFee(nft.price),
+        price: listingPrice,
+        marketplace_fee: calculateMarketplaceFee(listingPrice),
+        seller_amount: listingPrice - calculateMarketplaceFee(listingPrice),
         gas_fee: txResult.gasUsed ? txResult.gasUsed / 1_000_000_000 : undefined, // Convert to SUI
         transaction_type: 'purchase',
       });
 
       toast({
         title: "Purchase Successful!",
-        description: `You have successfully purchased "${nft.title}" for ${nft.price} SUI`,
+        description: `You have successfully purchased "${nft.title}" for ${listingPrice} SUI`,
         variant: "default"
       });
 

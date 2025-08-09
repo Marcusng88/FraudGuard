@@ -10,11 +10,6 @@ import {
   confirmUnlisting, 
   confirmEditListing 
 } from '@/lib/api';
-import { 
-  extractListingIdFromTransaction,
-  executeUnlistNFTTransaction,
-  executeEditListingTransaction 
-} from '@/lib/blockchain-utils';
 import { Loader2, DollarSign, Edit, X, CheckCircle } from 'lucide-react';
 
 interface NFTForCompleteFlow {
@@ -78,7 +73,7 @@ export function CompleteListingFlow({ nft, onUpdate }: CompleteListingFlowProps)
       });
 
       const txResult = await executeListNFTTransaction({
-        nftId: nft.sui_object_id,
+        nftObjectId: nft.sui_object_id,
         price: price,
         sellerAddress: wallet.address
       });
@@ -94,12 +89,7 @@ export function CompleteListingFlow({ nft, onUpdate }: CompleteListingFlowProps)
       let blockchainListingId = txResult.blockchainListingId;
       
       if (!blockchainListingId) {
-        // Try to extract from full transaction details
-        blockchainListingId = await extractListingIdFromTransaction(txResult.txId, suiClient);
-      }
-
-      if (!blockchainListingId) {
-        console.warn('Could not extract blockchain listing ID, using transaction digest as fallback');
+        console.warn('Listing ID not available in transaction result, using transaction digest as fallback');
         blockchainListingId = txResult.txId; // Fallback
       }
 
@@ -173,7 +163,7 @@ export function CompleteListingFlow({ nft, onUpdate }: CompleteListingFlowProps)
       });
 
       const txResult = await executeUnlistNFTTransaction({
-        listingId: nft.blockchain_listing_id, // Use the actual blockchain listing object ID
+        nftObjectId: nft.sui_object_id,
         sellerAddress: wallet.address
       });
 
@@ -253,8 +243,9 @@ export function CompleteListingFlow({ nft, onUpdate }: CompleteListingFlowProps)
       });
 
       const txResult = await executeEditListingTransaction({
-        listingId: nft.blockchain_listing_id, // Use the actual blockchain listing object ID
-        newPrice: price
+        nftObjectId: nft.sui_object_id,
+        newPrice: price,
+        sellerAddress: wallet.address
       });
 
       if (!txResult.success) {

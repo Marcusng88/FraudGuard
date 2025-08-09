@@ -27,7 +27,8 @@ import {
 import { useWallet } from '@/hooks/useWallet';
 import { useUserNFTs, useCreateListing, useUpdateListing, useDeleteListing, useUserListings } from '@/hooks/useListings';
 import { notifyNFTListed, notifyNFTUnlisted, confirmListing, confirmUnlisting, confirmEditListing, createListing } from '@/lib/api';
-import { extractListingId, extractListingEventData } from '@/lib/blockchain-utils';
+// TODO: Transition to new marketplace system
+// import { extractListingId, extractListingEventData } from '@/lib/blockchain-utils';
 import { useToast } from '@/hooks/use-toast';
 
 interface NFT {
@@ -134,7 +135,7 @@ export function ListingManager() {
       // Step 2: Execute blockchain transaction
       console.log('Executing blockchain listing transaction...');
       const blockchainResult = await executeListNFTTransaction({
-        nftId: selectedNFT.sui_object_id || selectedNFT.id,
+        nftObjectId: selectedNFT.sui_object_id || selectedNFT.id,
         price: price,
         sellerAddress: wallet?.address
       });
@@ -184,7 +185,7 @@ export function ListingManager() {
       // Step 1: Execute blockchain transaction
       console.log('Executing blockchain unlisting transaction...');
       const blockchainResult = await executeUnlistNFTTransaction({
-        listingId: nft.id, // In production, this would be the blockchain listing ID
+        nftObjectId: nft.sui_object_id || nft.id,
         sellerAddress: wallet.address
       });
 

@@ -398,11 +398,21 @@ async def confirm_listing(
 
         # Update listing with blockchain transaction data
         listing.listing_metadata = listing.listing_metadata or {}
+        
+        # Always store the transaction ID
         listing.listing_metadata.update({
             "blockchain_tx_id": confirm_data.blockchain_tx_id,
-            "blockchain_listing_id": confirm_data.blockchain_listing_id,
             "confirmed_at": datetime.utcnow().isoformat()
         })
+        
+        # Only store blockchain_listing_id if it's not None
+        if confirm_data.blockchain_listing_id:
+            listing.listing_metadata["blockchain_listing_id"] = confirm_data.blockchain_listing_id
+            logger.info(f"Stored blockchain listing ID: {confirm_data.blockchain_listing_id}")
+        else:
+            logger.warning(f"No blockchain listing ID provided for listing {listing_id}, transaction: {confirm_data.blockchain_tx_id}")
+            # Store the transaction ID as a fallback for unlisting
+            listing.listing_metadata["fallback_for_unlisting"] = "use_transaction_id"
         listing.updated_at = datetime.utcnow()
 
         # Record transaction history
@@ -436,6 +446,92 @@ async def confirm_listing(
         logger.error(f"Error confirming listing: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error confirming listing: {str(e)}")
+
+@router.put("/{listing_id}/update-blockchain-id")
+async def update_blockchain_listing_id(
+    listing_id: str,
+    update_data: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Update the blockchain listing ID for a listing (recovery function)
+    """
+    try:
+        # Validate UUID format
+        try:
+            uuid.UUID(listing_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid listing ID format")
+
+        listing = db.query(Listing).filter(Listing.id == listing_id).first()
+        if not listing:
+            raise HTTPException(status_code=404, detail="Listing not found")
+
+        # Update listing metadata with blockchain listing ID
+        blockchain_listing_id = update_data.get('blockchain_listing_id')
+        if not blockchain_listing_id:
+            raise HTTPException(status_code=400, detail="blockchain_listing_id is required")
+
+        listing.listing_metadata = listing.listing_metadata or {}
+        listing.listing_metadata["blockchain_listing_id"] = blockchain_listing_id
+        listing.listing_metadata["blockchain_id_updated_at"] = datetime.utcnow().isoformat()
+        listing.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        logger.info(f"Updated blockchain listing ID for listing {listing_id}: {blockchain_listing_id}")
+
+        return {
+            "success": True,
+            "message": "Blockchain listing ID updated successfully",
+            "listing_id": listing_id,
+            "blockchain_listing_id": blockchain_listing_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating blockchain listing ID: {e}")
+        raise HTTPException(status_code=500, detail="Failed to update blockchain listing ID")
+
+@router.get("/nft/{nft_id}/active")
+async def get_active_listing_for_nft(
+    nft_id: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get the active listing for a specific NFT
+    """
+    try:
+        # Validate UUID format
+        try:
+            uuid.UUID(nft_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid NFT ID format")
+
+        listing = db.query(Listing).filter(
+            Listing.nft_id == nft_id,
+            Listing.status == 'active'
+        ).first()
+        
+        if not listing:
+            raise HTTPException(status_code=404, detail="No active listing found for this NFT")
+
+        return {
+            "id": str(listing.id),
+            "nft_id": str(listing.nft_id),
+            "seller_wallet_address": listing.seller_wallet_address,
+            "price": float(listing.price),
+            "status": listing.status,
+            "listing_metadata": listing.listing_metadata,
+            "created_at": listing.created_at.isoformat(),
+            "updated_at": listing.updated_at.isoformat() if listing.updated_at else None,
+            "expires_at": listing.expires_at.isoformat() if listing.expires_at else None
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting active listing for NFT {nft_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get active listing")
 
 @router.put("/{listing_id}/confirm-unlisting")
 async def confirm_unlisting(

@@ -14,6 +14,9 @@ import Index from "./pages/Index";
 import Dashboard from "./pages/Dashboard";
 import Marketplace from "./pages/Marketplace";
 import CreateNft from "./pages/CreateNft";
+import ListNft from "./pages/ListNft";
+import UnlistNft from "./pages/UnlistNft";
+import EditListing from "./pages/EditListing";
 import Profile from "./pages/Profile";
 import NFTDetail from "./pages/NFTDetail";
 import NotFound from "./pages/NotFound";
@@ -43,6 +46,9 @@ const App = () => (
                 <Route path="/marketplace" element={<ProtectedRoute><Marketplace /></ProtectedRoute>} />
                 <Route path="/nft/:nftId" element={<ProtectedRoute><NFTDetail /></ProtectedRoute>} />
                 <Route path="/create" element={<ProtectedRoute><CreateNft /></ProtectedRoute>} />
+                <Route path="/list/:nftId" element={<ProtectedRoute><ListNft /></ProtectedRoute>} />
+                <Route path="/unlist/:listingId" element={<ProtectedRoute><UnlistNft /></ProtectedRoute>} />
+                <Route path="/edit-listing/:listingId" element={<ProtectedRoute><EditListing /></ProtectedRoute>} />
                 <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
                 {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                 <Route path="*" element={<NotFound />} />

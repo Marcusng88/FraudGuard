@@ -31,10 +31,27 @@ import {
   Star
 } from 'lucide-react';
 import { useNFTDetails, useNFTAnalysisDetails, useSimilarNFTs } from '@/hooks/useMarketplace';
-import { AnalysisDetails, recordBlockchainTransaction } from '@/lib/api';
+import { AnalysisDetails, recordBlockchainTransaction, checkNFTListingStatus } from '@/lib/api';
 import { useWallet } from '@/hooks/useWallet';
 import { useToast } from '@/hooks/use-toast';
 import { extractPurchaseEventData, getTransactionDetails, MARKETPLACE_OBJECT_ID } from '@/lib/blockchain-utils';
+import { 
+  createPurchaseNFTTransaction, 
+  getUserSUICoins, 
+  parseBlockchainError,
+  getBlockchainListingInfo,
+  type PurchaseParams,
+  MARKETPLACE_PACKAGE_ID
+} from '@/lib/blockchain/marketplace-utils';
+import { checkNFTInMarketplaceEscrow } from '@/lib/sui-utils';
+import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
+
+// Interface for fraud indicator details
+interface FraudIndicatorDetails {
+  detected: boolean;
+  confidence: number;
+  evidence?: string[];
+}
 
 const threatConfig = {
   safe: {
@@ -74,6 +91,9 @@ const NFTDetail = () => {
   const { wallet, connect, executeBuyTransaction, validateSufficientBalance, calculateMarketplaceFee, refreshBalance } = useWallet();
   const { toast } = useToast();
   const [isBuying, setIsBuying] = useState(false);
+  
+  // Initialize Sui client for blockchain state checks
+  const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
   if (isLoading || analysisLoading || similarLoading) {
     return (
@@ -128,10 +148,10 @@ const NFTDetail = () => {
   };
 
   // Helper function to check if data is empty and return appropriate message
-  const isEmptyData = (value: any): boolean => {
+  const isEmptyData = (value: unknown): boolean => {
     if (value === null || value === undefined || value === '') return true;
     if (Array.isArray(value) && value.length === 0) return true;
-    if (typeof value === 'object' && Object.keys(value).length === 0) return true;
+    if (typeof value === 'object' && value !== null && Object.keys(value).length === 0) return true;
     return false;
   };
 
@@ -180,7 +200,7 @@ const NFTDetail = () => {
 
   const analysisDetails = getAnalysisDetails();
 
-  // Purchase handler function
+  // Purchase handler function with new marketplace smart contract integration
   const handlePurchase = async () => {
     if (!wallet?.address) {
       // If wallet is not connected, prompt user to connect
@@ -220,12 +240,40 @@ const NFTDetail = () => {
     setIsBuying(true);
 
     try {
-      // Validate sufficient balance (including marketplace fee)
-      const totalCost = nft.price + calculateMarketplaceFee(nft.price);
-      console.log(`Total cost: ${totalCost} SUI (Price: ${nft.price} + Fee: ${calculateMarketplaceFee(nft.price)})`);
+      // Step 1: Check if NFT is actually in marketplace escrow (blockchain state check)
+      console.log('Checking if NFT is in marketplace escrow for purchase...');
+      const escrowCheck = await checkNFTInMarketplaceEscrow(suiClient, nft.sui_object_id);
+      console.log('Escrow check result for purchase:', escrowCheck);
+      
+      if (!escrowCheck.inEscrow) {
+        toast({
+          title: "Purchase Error", 
+          description: "This NFT is not currently listed for sale on the marketplace",
+          variant: "destructive"
+        });
+        return;
+      }
+
+      // Step 2: Get listing info from database for price and seller details
+      console.log('Getting listing info from database...');
+      const listingStatus = await checkNFTListingStatus(nft.id);
+      
+      if (!listingStatus.is_listed || !listingStatus.listing) {
+        toast({
+          title: "Purchase Error",
+          description: "This NFT listing information is not available",
+          variant: "destructive"
+        });
+        return;
+      }
+      
+      const finalPrice = listingStatus.price || nft.price;
+      const finalSellerAddress = listingStatus.seller_address || currentOwner;
+
+      const totalCost = finalPrice + calculateMarketplaceFee(finalPrice);
+      console.log(`Total cost: ${totalCost} SUI (Price: ${finalPrice} + Fee: ${calculateMarketplaceFee(finalPrice)})`);
       
       const balanceCheck = await validateSufficientBalance(totalCost);
-      console.log('Balance check result:', balanceCheck);
       
       if (!balanceCheck.sufficient) {
         toast({
@@ -236,38 +284,12 @@ const NFTDetail = () => {
         return;
       }
 
-      // Get the seller address (current owner of the NFT)
-      const sellerAddress = currentOwner;
-      if (!sellerAddress) {
-        toast({
-          title: "Purchase Error",
-          description: "Unable to determine NFT owner",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      // Check if NFT has an active listing
-      if (!nftData.listing) {
-        toast({
-          title: "Purchase Error",
-          description: "This NFT is not currently listed for sale",
-          variant: "destructive"
-        });
-        return;
-      }
-
-      console.log(`Initiating purchase from seller: ${sellerAddress}`);
-      console.log('NFT Data Listing:', nftData.listing); // Debug log
-
-      // Execute blockchain transaction
+      // Step 3: Execute blockchain purchase transaction
       const buyParams = {
-        marketplaceId: MARKETPLACE_OBJECT_ID,
-        listingId: nftData.listing.id, // Use the actual listing ID from the API
-        nftId: nft.sui_object_id || nft.id,
-        price: nft.price,
+        nftObjectId: nft.sui_object_id || nft.id,
+        listingId: listingStatus.listing?.id || nft.id,
+        price: finalPrice,
         buyerAddress: wallet.address,
-        sellerAddress: sellerAddress,
       };
 
       toast({
@@ -275,68 +297,43 @@ const NFTDetail = () => {
         description: "Please confirm the transaction in your wallet",
       });
 
-      console.log('Executing buy transaction with params:', buyParams);
+      console.log('Executing buy transaction...');
       const txResult = await executeBuyTransaction(buyParams);
-      console.log('Transaction result:', txResult);
-
+      
       if (!txResult.success) {
         throw new Error(txResult.error || 'Transaction failed');
       }
 
-      // For the simplified transaction, we'll skip the event extraction for now
-      // and proceed directly to recording the transaction
-      
-      console.log('Recording transaction in backend...');
-      
-      try {
-        // Record transaction in backend
-        await recordBlockchainTransaction({
-          blockchain_tx_id: txResult.txId,
-          listing_id: nftData.listing.id, // Use the actual listing ID
-          nft_blockchain_id: nft.sui_object_id || nft.id,
-          seller_wallet_address: sellerAddress,
-          buyer_wallet_address: wallet.address,
-          price: nft.price,
-          marketplace_fee: calculateMarketplaceFee(nft.price),
-          seller_amount: nft.price - calculateMarketplaceFee(nft.price),
-          gas_fee: txResult.gasUsed ? txResult.gasUsed / 1_000_000_000 : undefined, // Convert to SUI
-          transaction_type: 'purchase',
-        });
-
-        console.log('Transaction recorded successfully in backend');
-      } catch (backendError) {
-        console.error('Failed to record transaction in backend:', backendError);
-        // Don't fail the entire purchase if backend recording fails
-        toast({
-          title: "Warning",
-          description: "Purchase completed but transaction recording failed. Please contact support.",
-          variant: "destructive"
-        });
-      }
+      // Step 4: Record transaction in backend
+      await recordBlockchainTransaction({
+        blockchain_tx_id: txResult.txId,
+        listing_id: listingStatus.listing?.id || nft.id,
+        nft_blockchain_id: nft.sui_object_id || nft.id,
+        seller_wallet_address: finalSellerAddress,
+        buyer_wallet_address: wallet.address,
+        price: finalPrice,
+        marketplace_fee: calculateMarketplaceFee(finalPrice),
+        seller_amount: finalPrice - calculateMarketplaceFee(finalPrice),
+        gas_fee: txResult.gasUsed ? txResult.gasUsed / 1_000_000_000 : undefined,
+        transaction_type: 'purchase',
+      });
 
       toast({
         title: "Purchase Successful!",
-        description: `You have successfully purchased "${nft.title}" for ${nft.price} SUI`,
+        description: `You have successfully purchased "${nft.title}" for ${finalPrice} SUI`,
         variant: "default"
       });
 
-      // Refresh wallet balance after successful purchase
-      try {
-        await refreshBalance();
-      } catch (balanceError) {
-        console.error('Failed to refresh balance:', balanceError);
-      }
-
-      // Refresh the page or navigate to user's collection
-      setTimeout(() => {
-        navigate('/profile');
-      }, 2000);
+      await refreshBalance();
+      setTimeout(() => navigate('/profile'), 2000);
 
     } catch (error) {
       console.error('Purchase failed:', error);
+      const errorMessage = parseBlockchainError(error);
+      
       toast({
         title: "Purchase Failed",
-        description: error instanceof Error ? error.message : 'Unknown error occurred',
+        description: errorMessage,
         variant: "destructive"
       });
     } finally {
@@ -522,7 +519,7 @@ const NFTDetail = () => {
                     <div className="flex-1">
                       <p className="font-medium text-foreground">Creator</p>
                       <p className="text-sm text-muted-foreground">
-                        {nft.wallet_address ? `${nft.wallet_address.slice(0, 8)}...${nft.wallet_address.slice(-6)}` : '-'}
+                        {nft.creator_wallet_address ? `${nft.creator_wallet_address.slice(0, 8)}...${nft.creator_wallet_address.slice(-6)}` : '-'}
                       </p>
                     </div>
                     <Badge variant="outline" className="text-xs bg-success/10 text-success border-success/30">
@@ -942,9 +939,10 @@ const NFTDetail = () => {
                         <div className="space-y-3 text-base">
                           {Object.entries(analysisDetails.image_analysis.fraud_indicators).map(([indicator, details]) => {
                             if (typeof details === 'object' && details !== null) {
-                              const detected = (details as any).detected;
-                              const confidence = (details as any).confidence;
-                              const evidence = (details as any).evidence;
+                              const fraudIndicator = details as FraudIndicatorDetails;
+                              const detected = fraudIndicator.detected;
+                              const confidence = fraudIndicator.confidence;
+                              const evidence = fraudIndicator.evidence;
                               
                               return (
                                 <div key={indicator} className="space-y-2">

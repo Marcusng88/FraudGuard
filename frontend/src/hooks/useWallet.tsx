@@ -1,20 +1,22 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { useCurrentWallet, useCurrentAccount, useConnectWallet, useDisconnectWallet, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import { SuiClient, getFullnodeUrl } from '@mysten/sui/client';
 import { Transaction } from '@mysten/sui/transactions';
 import {
-  executeBuyTransaction,
-  executeListNFTTransaction,
-  executeUnlistNFTTransaction,
-  executeEditListingTransaction,
-  validateSufficientBalance,
-  BuyNFTParams,
-  SellNFTParams,
-  UnlistNFTParams,
-  TransactionResult,
-  calculateMarketplaceFee,
-  calculateSellerAmount
-} from '@/lib/blockchain-utils';
+  createListNFTTransaction,
+  createPurchaseNFTTransaction,
+  createUnlistNFTTransaction,
+  createUpdatePriceTransaction,
+  notifyBackendListing,
+  notifyBackendCancellation,
+  notifyBackendPriceUpdate,
+  getUserSUICoins,
+  parseBlockchainError,
+  ListingParams,
+  PurchaseParams,
+  UnlistParams,
+  UpdatePriceParams
+} from '@/lib/blockchain/marketplace-utils';
 
 interface Wallet {
   address: string;
@@ -22,20 +24,28 @@ interface Wallet {
   balance?: number;
 }
 
+// Updated type definitions to match marketplace-utils
+export interface MarketplaceTransactionResult {
+  success: boolean;
+  txId: string;
+  error?: string;
+  blockchainListingId?: string;
+  gasUsed?: number;
+}
+
 interface WalletContextType {
   wallet: Wallet | null;
+  isConnected: boolean;
   connect: () => Promise<void>;
-  disconnect: () => void;
-  isLoading: boolean;
-  refreshBalance: () => Promise<void>;
-  // Blockchain transaction methods
-  executeBuyTransaction: (params: BuyNFTParams) => Promise<TransactionResult>;
-  executeListNFTTransaction: (params: SellNFTParams) => Promise<TransactionResult>;
-  executeUnlistNFTTransaction: (params: UnlistNFTParams) => Promise<TransactionResult>;
-  executeEditListingTransaction: (params: { listingId: string; newPrice: number }) => Promise<TransactionResult>;
+  disconnect: () => Promise<void>;
+  executeBuyTransaction: (params: PurchaseParams) => Promise<MarketplaceTransactionResult>;
+  executeListNFTTransaction: (params: ListingParams) => Promise<MarketplaceTransactionResult>;
+  executeUnlistNFTTransaction: (params: UnlistParams) => Promise<MarketplaceTransactionResult>;
+  executeEditListingTransaction: (params: UpdatePriceParams) => Promise<MarketplaceTransactionResult>;
   validateSufficientBalance: (amount: number) => Promise<{ sufficient: boolean; currentBalance: number; required: number }>;
   calculateMarketplaceFee: (price: number) => number;
   calculateSellerAmount: (price: number) => number;
+  refreshBalance: () => Promise<void>;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
@@ -44,191 +54,23 @@ const WalletContext = createContext<WalletContextType | undefined>(undefined);
 const suiClient = new SuiClient({ url: getFullnodeUrl('testnet') });
 
 // API base URL
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
 
-export function WalletProvider({ children }: { children: React.ReactNode }): React.ReactElement {
+// Marketplace configuration - No longer need MARKETPLACE_ID as it's handled in marketplace-utils
+const MARKETPLACE_FEE_RATE = 0.025; // 2.5% marketplace fee
+
+export function WalletProvider({ children }: { children: React.ReactNode }) {
+  const { currentWallet } = useCurrentWallet();
+  const currentAccount = useCurrentAccount();
+  const { mutateAsync: connectWallet } = useConnectWallet();
+  const { mutateAsync: disconnectWallet } = useDisconnectWallet();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
+  
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  // Use dapp-kit hooks
-  const currentWallet = useCurrentWallet();
-  const currentAccount = useCurrentAccount();
-  const connectWallet = useConnectWallet();
-  const disconnectWallet = useDisconnectWallet();
-  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
-
-  // Create user in backend when wallet connects
-  const createUserInBackend = async (walletAddress: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/listings/user`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          wallet_address: walletAddress,
-        }),
-      });
-
-      if (!response.ok) {
-        console.error('Failed to create user in backend:', response.statusText);
-      } else {
-        console.log('User created/retrieved in backend successfully');
-      }
-    } catch (error) {
-      console.error('Error creating user in backend:', error);
-    }
-  };
-
-  // Update wallet state when current wallet changes
-  useEffect(() => {
-    if (currentWallet.isConnected && currentAccount) {
-      // Create user in backend
-      createUserInBackend(currentAccount.address);
-      
-      // Get balance for the connected account
-      const getBalance = async () => {
-        try {
-          const balance = await suiClient.getBalance({
-            owner: currentAccount.address,
-            coinType: '0x2::sui::SUI'
-          });
-          
-          const walletData: Wallet = {
-            address: currentAccount.address,
-            isConnected: true,
-            balance: Number(balance.totalBalance) / 1000000000, // Convert from MIST to SUI
-          };
-          
-          setWallet(walletData);
-          localStorage.setItem('wallet', JSON.stringify(walletData));
-        } catch (error) {
-          console.error('Failed to get balance:', error);
-          // Set wallet without balance if balance fetch fails
-          const walletData: Wallet = {
-            address: currentAccount.address,
-            isConnected: true,
-          };
-          setWallet(walletData);
-          localStorage.setItem('wallet', JSON.stringify(walletData));
-        }
-      };
-      
-      getBalance();
-    } else if (currentWallet.isDisconnected) {
-      setWallet(null);
-      localStorage.removeItem('wallet');
-    }
-  }, [currentWallet.isConnected, currentWallet.isDisconnected, currentAccount]);
-
-  const connect = async () => {
-    setIsLoading(true);
-    try {
-      // Get available wallets
-      const wallets = currentWallet.currentWallet ? [currentWallet.currentWallet] : [];
-      
-      if (wallets.length > 0) {
-        // Connect to the first available wallet
-        await connectWallet.mutateAsync({
-          wallet: wallets[0],
-        });
-      } else {
-        console.warn('No wallets available');
-      }
-    } catch (error) {
-      console.error('Failed to connect wallet:', error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const disconnect = async () => {
-    try {
-      await disconnectWallet.mutateAsync();
-    } catch (error) {
-      console.error('Failed to disconnect wallet:', error);
-    }
-  };
-
-  // Blockchain transaction methods
-  const handleBuyTransaction = async (params: BuyNFTParams): Promise<TransactionResult> => {
-    if (!wallet?.address) {
-      throw new Error('Wallet not connected');
-    }
-
-    const wrappedSignAndExecute = async (transaction: Transaction) => {
-      const result = await signAndExecuteTransaction({ transaction });
-      // Return a properly typed result
-      return {
-        digest: result.digest,
-        effects: result.effects,
-      } as { digest: string; effects?: { status?: { status: string; error?: string }; gasUsed?: { computationCost: number } } };
-    };
-
-    return executeBuyTransaction(params, wrappedSignAndExecute);
-  };
-
-  const handleListNFTTransaction = async (params: SellNFTParams): Promise<TransactionResult> => {
-    if (!wallet?.address) {
-      throw new Error('Wallet not connected');
-    }
-
-    const wrappedSignAndExecute = async (transaction: Transaction) => {
-      const result = await signAndExecuteTransaction({ transaction });
-      // Return a properly typed result
-      return {
-        digest: result.digest,
-        effects: result.effects,
-      } as { digest: string; effects?: { status?: { status: string; error?: string }; gasUsed?: { computationCost: number } } };
-    };
-
-    return executeListNFTTransaction(params, wrappedSignAndExecute);
-  };
-
-  const handleUnlistNFTTransaction = async (params: UnlistNFTParams): Promise<TransactionResult> => {
-    if (!wallet?.address) {
-      throw new Error('Wallet not connected');
-    }
-
-    const wrappedSignAndExecute = async (transaction: Transaction) => {
-      const result = await signAndExecuteTransaction({ transaction });
-      // Return a properly typed result
-      return {
-        digest: result.digest,
-        effects: result.effects,
-      } as { digest: string; effects?: { status?: { status: string; error?: string }; gasUsed?: { computationCost: number } } };
-    };
-
-    return executeUnlistNFTTransaction(params, wrappedSignAndExecute);
-  };
-
-  const handleEditListingTransaction = async (params: { listingId: string; newPrice: number }): Promise<TransactionResult> => {
-    if (!wallet?.address) {
-      throw new Error('Wallet not connected');
-    }
-
-    const wrappedSignAndExecute = async (transaction: Transaction) => {
-      const result = await signAndExecuteTransaction({ transaction });
-      // Return a properly typed result
-      return {
-        digest: result.digest,
-        effects: result.effects,
-      } as { digest: string; effects?: { status?: { status: string; error?: string }; gasUsed?: { computationCost: number } } };
-    };
-
-    return executeEditListingTransaction(params, wrappedSignAndExecute);
-  };
-
-  const handleValidateSufficientBalance = async (amount: number) => {
-    if (!wallet?.address) {
-      throw new Error('Wallet not connected');
-    }
-
-    return validateSufficientBalance(wallet.address, amount);
-  };
-
   // Refresh wallet balance
-  const refreshBalance = async () => {
+  const refreshBalance = useCallback(async () => {
     if (!currentAccount?.address) {
       return;
     }
@@ -236,55 +78,246 @@ export function WalletProvider({ children }: { children: React.ReactNode }): Rea
     try {
       const balance = await suiClient.getBalance({
         owner: currentAccount.address,
-        coinType: '0x2::sui::SUI'
+        coinType: '0x2::sui::SUI',
       });
-      
-      const updatedWallet: Wallet = {
+
+      const balanceInSui = parseInt(balance.totalBalance) / 1e9;
+      setWallet(prev => prev ? { ...prev, balance: balanceInSui } : null);
+    } catch (error) {
+      console.error('Failed to fetch balance:', error);
+    }
+  }, [currentAccount?.address]);
+
+  // Update wallet state when account changes
+  useEffect(() => {
+    if (currentAccount?.address) {
+      setWallet({
         address: currentAccount.address,
         isConnected: true,
-        balance: Number(balance.totalBalance) / 1000000000, // Convert from MIST to SUI
-      };
-      
-      setWallet(updatedWallet);
-      localStorage.setItem('wallet', JSON.stringify(updatedWallet));
+        balance: 0,
+      });
+      refreshBalance();
+    } else {
+      setWallet(null);
+    }
+  }, [currentAccount, refreshBalance]);
+
+  // Connect wallet function
+  const connect = async () => {
+    try {
+      setIsLoading(true);
+      if (!currentWallet) {
+        throw new Error('No wallet available');
+      }
+      await connectWallet({ wallet: currentWallet });
     } catch (error) {
-      console.error('Failed to refresh balance:', error);
+      console.error('Failed to connect wallet:', error);
+      throw error;
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  // Check for existing wallet connection on mount
-  useEffect(() => {
-    const savedWallet = localStorage.getItem('wallet');
-    if (savedWallet && !currentWallet.isConnected) {
-      try {
-        const parsedWallet = JSON.parse(savedWallet);
-        // Only restore if we have a valid wallet address
-        if (parsedWallet.address && parsedWallet.address.startsWith('0x')) {
-          setWallet(parsedWallet);
-        }
-      } catch (error) {
-        console.error('Failed to parse saved wallet:', error);
-        localStorage.removeItem('wallet');
-      }
+  // Disconnect wallet function
+  const disconnect = async () => {
+    try {
+      setIsLoading(true);
+      await disconnectWallet();
+      setWallet(null);
+    } catch (error) {
+      console.error('Failed to disconnect wallet:', error);
+      throw error;
+    } finally {
+      setIsLoading(false);
     }
-  }, [currentWallet.isConnected]);
+  };
+
+  // Handle buy NFT transaction using marketplace-utils
+  const handleBuyTransaction = async (params: PurchaseParams): Promise<MarketplaceTransactionResult> => {
+    if (!signAndExecuteTransaction || !currentAccount?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    try {
+      // Get user's SUI coins for payment
+      const coins = await getUserSUICoins(suiClient, currentAccount.address, params.price);
+      if (coins.length === 0) {
+        return { success: false, txId: '', error: 'Insufficient SUI balance' };
+      }
+
+      // Create purchase transaction
+      const tx = createPurchaseNFTTransaction(params, coins[0]);
+      
+      // Execute transaction
+      const result = await signAndExecuteTransaction({ transaction: tx });
+      
+      // Note: Backend notification will be handled by the calling component
+      // to avoid complex blockchain service dependencies
+
+      return { 
+        success: true, 
+        txId: result.digest,
+        gasUsed: 0 // Gas usage will be calculated by backend
+      };
+    } catch (error) {
+      console.error('Buy transaction failed:', error);
+      return { 
+        success: false, 
+        txId: '', 
+        error: parseBlockchainError(error) 
+      };
+    }
+  };
+
+  // Handle list NFT transaction using marketplace-utils
+  const handleListNFTTransaction = async (params: ListingParams): Promise<MarketplaceTransactionResult> => {
+    if (!signAndExecuteTransaction || !currentAccount?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    try {
+      // Create listing transaction
+      const tx = createListNFTTransaction(params);
+      
+      // Execute transaction
+      const result = await signAndExecuteTransaction({ transaction: tx });
+      
+      // Notify backend of successful listing
+      await notifyBackendListing(
+        params.nftObjectId,
+        params.sellerAddress,
+        params.price,
+        result.digest
+        // No longer need marketplace ID parameter
+      );
+
+      return { 
+        success: true, 
+        txId: result.digest,
+        blockchainListingId: result.digest // Use transaction digest as listing identifier
+      };
+    } catch (error) {
+      console.error('List transaction failed:', error);
+      return { 
+        success: false, 
+        txId: '', 
+        error: parseBlockchainError(error) 
+      };
+    }
+  };
+
+  // Handle unlist NFT transaction using marketplace-utils
+  const handleUnlistNFTTransaction = async (params: UnlistParams): Promise<MarketplaceTransactionResult> => {
+    if (!signAndExecuteTransaction || !currentAccount?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    try {
+      // Create unlist transaction
+      const tx = createUnlistNFTTransaction(params);
+      
+      // Execute transaction
+      const result = await signAndExecuteTransaction({ transaction: tx });
+      
+      // Notify backend of successful unlisting
+      await notifyBackendCancellation(
+        params.nftObjectId,
+        params.sellerAddress,
+        result.digest
+      );
+
+      return { 
+        success: true, 
+        txId: result.digest 
+      };
+    } catch (error) {
+      console.error('Unlist transaction failed:', error);
+      return { 
+        success: false, 
+        txId: '', 
+        error: parseBlockchainError(error) 
+      };
+    }
+  };
+
+  // Handle edit listing transaction using marketplace-utils
+  const handleEditListingTransaction = async (params: UpdatePriceParams): Promise<MarketplaceTransactionResult> => {
+    if (!signAndExecuteTransaction || !currentAccount?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    try {
+      // Create price update transaction
+      const tx = createUpdatePriceTransaction(params);
+      
+      // Execute transaction
+      const result = await signAndExecuteTransaction({ transaction: tx });
+      
+      // Notify backend of successful price update
+      await notifyBackendPriceUpdate(
+        params.nftObjectId,
+        params.sellerAddress,
+        params.newPrice,
+        result.digest
+      );
+
+      return { 
+        success: true, 
+        txId: result.digest 
+      };
+    } catch (error) {
+      console.error('Edit listing transaction failed:', error);
+      return { 
+        success: false, 
+        txId: '', 
+        error: parseBlockchainError(error) 
+      };
+    }
+  };
+
+  // Validate sufficient balance
+  const handleValidateSufficientBalance = async (amount: number) => {
+    if (!wallet?.address) {
+      throw new Error('Wallet not connected');
+    }
+
+    const currentBalance = wallet.balance || 0;
+    const sufficient = currentBalance >= amount;
+    
+    return {
+      sufficient,
+      currentBalance,
+      required: amount
+    };
+  };
+
+  // Calculate marketplace fee
+  const calculateMarketplaceFee = (price: number): number => {
+    return price * MARKETPLACE_FEE_RATE;
+  };
+
+  // Calculate seller amount after fee
+  const calculateSellerAmount = (price: number): number => {
+    return price * (1 - MARKETPLACE_FEE_RATE);
+  };
+
+  const contextValue: WalletContextType = {
+    wallet,
+    isConnected: !!wallet?.isConnected,
+    connect,
+    disconnect,
+    refreshBalance,
+    executeBuyTransaction: handleBuyTransaction,
+    executeListNFTTransaction: handleListNFTTransaction,
+    executeUnlistNFTTransaction: handleUnlistNFTTransaction,
+    executeEditListingTransaction: handleEditListingTransaction,
+    validateSufficientBalance: handleValidateSufficientBalance,
+    calculateMarketplaceFee,
+    calculateSellerAmount,
+  };
 
   return (
-    <WalletContext.Provider value={{ 
-      wallet, 
-      connect, 
-      disconnect, 
-      isLoading: isLoading || connectWallet.isPending || disconnectWallet.isPending,
-      refreshBalance,
-      // Blockchain methods
-      executeBuyTransaction: handleBuyTransaction,
-      executeListNFTTransaction: handleListNFTTransaction,
-      executeUnlistNFTTransaction: handleUnlistNFTTransaction,
-      executeEditListingTransaction: handleEditListingTransaction,
-      validateSufficientBalance: handleValidateSufficientBalance,
-      calculateMarketplaceFee,
-      calculateSellerAmount,
-    }}>
+    <WalletContext.Provider value={contextValue}>
       {children}
     </WalletContext.Provider>
   );
@@ -296,4 +329,4 @@ export function useWallet() {
     throw new Error('useWallet must be used within a WalletProvider');
   }
   return context;
-} 
+}

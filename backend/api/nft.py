@@ -330,15 +330,14 @@ async def get_user_nfts(
     db: Session = Depends(get_db)
 ):
     """
-    Get all NFTs owned by a specific wallet address
+    Get all NFTs currently owned by a specific wallet address
+    This only returns NFTs where the user is the current owner, not just the creator
     """
     try:
-        # Get NFTs where the user is either creator or owner
+        # Get NFTs where the user is the current owner
+        # Only show NFTs that the user currently owns, not ones they created but sold
         nfts = db.query(NFT).filter(
-            or_(
-                NFT.creator_wallet_address == wallet_address,
-                NFT.owner_wallet_address == wallet_address
-            )
+            NFT.owner_wallet_address == wallet_address
         ).all()
         
         nft_responses = []
@@ -397,6 +396,133 @@ async def get_user_nfts(
         logger.error(f"Error getting user NFTs: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error getting user NFTs: {str(e)}")
 
+@router.get("/user/{wallet_address}/created")
+async def get_user_created_nfts(
+    wallet_address: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get all NFTs created by a specific wallet address (including ones they sold)
+    This returns NFTs where the user is the creator, regardless of current ownership
+    """
+    try:
+        # Get NFTs where the user is the creator
+        nfts = db.query(NFT).filter(
+            NFT.creator_wallet_address == wallet_address
+        ).all()
+        
+        nft_responses = []
+        for nft in nfts:
+            # Safely serialize analysis_details
+            analysis_details = None
+            if nft.analysis_details:
+                analysis_details = safe_serialize_analysis_details(nft.analysis_details)
+            
+            # Get current listing info
+            current_listing = db.query(Listing).filter(
+                and_(
+                    Listing.nft_id == nft.id,
+                    Listing.status == "active"
+                )
+            ).first()
+            
+            # Extract fraud detection info from analysis_details
+            is_fraud = False
+            confidence_score = None
+            reason = None
+            if analysis_details:
+                is_fraud = analysis_details.get('is_fraud', False)
+                confidence_score = analysis_details.get('confidence_score')
+                reason = analysis_details.get('reason')
+            
+            nft_responses.append(NFTResponse(
+                id=str(nft.id),
+                sui_object_id=nft.sui_object_id,
+                creator_wallet_address=nft.creator_wallet_address,
+                owner_wallet_address=nft.owner_wallet_address,
+                title=nft.title,
+                description=nft.description,
+                image_url=nft.image_url,
+                metadata_url=nft.metadata_url,
+                attributes=nft.attributes,
+                category=nft.category,
+                initial_price=float(nft.initial_price) if nft.initial_price else None,
+                price=float(current_listing.price) if current_listing else None,
+                is_listed=nft.is_listed,
+                is_fraud=is_fraud,
+                confidence_score=confidence_score,
+                reason=reason,
+                analysis_details=analysis_details,
+                created_at=nft.created_at,
+                updated_at=nft.updated_at
+            ))
+        
+        return {
+            "nfts": nft_responses,
+            "total": len(nft_responses),
+            "wallet_address": wallet_address,
+            "type": "created"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting user created NFTs: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting user created NFTs: {str(e)}")
+
+@router.get("/user/{wallet_address}/overview")
+async def get_user_nft_overview(
+    wallet_address: str,
+    db: Session = Depends(get_db)
+):
+    """
+    Get NFT overview for a user including owned and created NFTs with clear distinction
+    """
+    try:
+        # Get NFTs currently owned by the user
+        owned_nfts = db.query(NFT).filter(
+            NFT.owner_wallet_address == wallet_address
+        ).all()
+        
+        # Get NFTs created by the user (including sold ones)
+        created_nfts = db.query(NFT).filter(
+            NFT.creator_wallet_address == wallet_address
+        ).all()
+        
+        # Calculate summary statistics
+        total_owned = len(owned_nfts)
+        total_created = len(created_nfts)
+        
+        # Count listed NFTs (from owned NFTs)
+        listed_count = db.query(NFT).filter(
+            and_(
+                NFT.owner_wallet_address == wallet_address,
+                NFT.is_listed == True
+            )
+        ).count()
+        
+        # Count sold NFTs (created by user but owned by someone else)
+        sold_count = db.query(NFT).filter(
+            and_(
+                NFT.creator_wallet_address == wallet_address,
+                NFT.owner_wallet_address != wallet_address
+            )
+        ).count()
+        
+        return {
+            "wallet_address": wallet_address,
+            "summary": {
+                "total_owned": total_owned,
+                "total_created": total_created,
+                "currently_listed": listed_count,
+                "sold": sold_count
+            },
+            "owned_nft_ids": [str(nft.id) for nft in owned_nfts],
+            "created_nft_ids": [str(nft.id) for nft in created_nfts]
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting user NFT overview: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error getting user NFT overview: {str(e)}")
+
 @router.get("/by-wallet/{wallet_address}")
 async def get_nfts_by_wallet(
     wallet_address: str,
@@ -405,25 +531,20 @@ async def get_nfts_by_wallet(
     db: Session = Depends(get_db)
 ):
     """
-    Get NFTs by wallet address with pagination
+    Get NFTs currently owned by wallet address with pagination
+    This only returns NFTs where the user is the current owner, not just the creator
     """
     try:
         offset = (page - 1) * limit
         
-        # Get total count
+        # Get total count of NFTs currently owned by this wallet
         total_count = db.query(NFT).filter(
-            or_(
-                NFT.creator_wallet_address == wallet_address,
-                NFT.owner_wallet_address == wallet_address
-            )
+            NFT.owner_wallet_address == wallet_address
         ).count()
         
-        # Get paginated results
+        # Get paginated results of NFTs currently owned by this wallet
         nfts = db.query(NFT).filter(
-            or_(
-                NFT.creator_wallet_address == wallet_address,
-                NFT.owner_wallet_address == wallet_address
-            )
+            NFT.owner_wallet_address == wallet_address
         ).offset(offset).limit(limit).all()
         
         nft_responses = []
@@ -1479,3 +1600,52 @@ async def unlist_nft(
         logger.error(f"Error unlisting NFT {nft_id}: {str(e)}")
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Error unlisting NFT: {str(e)}")
+
+class ObjectIdUpdateRequest(BaseModel):
+    new_sui_object_id: str
+
+@router.put("/{nft_id}/update-object-id")
+async def update_nft_object_id(
+    nft_id: str,
+    request: ObjectIdUpdateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Update the Sui object ID for an NFT after blockchain operations
+    This is crucial after unlisting when the NFT object ID may change
+    """
+    try:
+        # Validate UUID format
+        try:
+            uuid.UUID(nft_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid NFT ID format")
+
+        # Find the NFT
+        nft = db.query(NFT).filter(NFT.id == nft_id).first()
+        if not nft:
+            raise HTTPException(status_code=404, detail="NFT not found")
+
+        # Update the object ID
+        old_object_id = nft.sui_object_id
+        nft.sui_object_id = request.new_sui_object_id
+        nft.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        logger.info(f"Updated NFT {nft_id} object ID from {old_object_id} to {request.new_sui_object_id}")
+
+        return {
+            "success": True,
+            "message": "NFT object ID updated successfully",
+            "nft_id": nft_id,
+            "old_object_id": old_object_id,
+            "new_object_id": request.new_sui_object_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error updating NFT {nft_id} object ID: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Error updating object ID: {str(e)}")

@@ -87,8 +87,9 @@ export function createIPFSUrl(hash: string): string {
   return `https://gateway.pinata.cloud/ipfs/${hash}`;
 }
 
-// Package ID from successful deployment
-export const PACKAGE_ID = '0x7ae460902e9017c7c9a5c898443105435b7393fc5776ace61b2f0c6a1f578381';
+// Package ID loaded from environment variables
+export const PACKAGE_ID = import.meta.env.VITE_MARKETPLACE_PACKAGE_ID || '0x7ae460902e9017c7c9a5c898443105435b7393fc5776ace61b2f0c6a1f578381';
+export const MARKETPLACE_OBJECT_ID = import.meta.env.VITE_MARKETPLACE_OBJECT_ID || "0x32ba6dea827dcb5539674b1c092111a70a064ac8c9144926d67d85367777dd06";
 
 /**
  * Mint NFT transaction
@@ -135,6 +136,124 @@ export async function getNFTEvents(client: SuiClient, digest: string) {
 }
 
 /**
+ * Get current NFT object ID for a given owner
+ * This is crucial after unlisting as the object ID may change
+ */
+export async function getCurrentNFTObjectId(
+  client: SuiClient, 
+  ownerAddress: string, 
+  nftType: string = 'FraudGuardNFT'
+): Promise<string[]> {
+  try {
+    // Get all NFT objects owned by the address
+    const objects = await client.getOwnedObjects({
+      owner: ownerAddress,
+      filter: {
+        StructType: `${PACKAGE_ID}::fraudguard_nft::FraudGuardNFT`
+      },
+      options: {
+        showContent: true,
+        showType: true,
+      }
+    });
+
+    return objects.data.map(obj => obj.data?.objectId).filter(Boolean) as string[];
+  } catch (error) {
+    console.error('Error fetching current NFT object IDs:', error);
+    return [];
+  }
+}
+
+/**
+ * Check if an NFT is currently in marketplace escrow by checking marketplace dynamic fields
+ * This helps determine if we should use blockchain unlisting or database-only unlisting
+ */
+export async function checkNFTInMarketplaceEscrow(
+  client: SuiClient,
+  nftObjectId: string,
+  marketplaceObjectId: string = MARKETPLACE_OBJECT_ID
+): Promise<{ inEscrow: boolean; error?: string }> {
+  try {
+    // Get the marketplace object to check its dynamic fields
+    const marketplaceObject = await client.getObject({
+      id: marketplaceObjectId,
+      options: {
+        showContent: true,
+        showType: true,
+      }
+    });
+
+    if (!marketplaceObject.data) {
+      return { inEscrow: false, error: 'Marketplace object not found' };
+    }
+
+    // Check if the NFT object ID exists as a dynamic field in the marketplace
+    // This indicates the NFT is in escrow
+    try {
+      const dynamicField = await client.getDynamicFieldObject({
+        parentId: marketplaceObjectId,
+        name: {
+          type: '0x2::object::ID',
+          value: nftObjectId
+        }
+      });
+      
+      // If we can fetch the dynamic field, the NFT is in escrow
+      return { inEscrow: !!dynamicField.data };
+    } catch (fieldError) {
+      // If we can't find the dynamic field, the NFT is not in escrow
+      return { inEscrow: false };
+    }
+  } catch (error) {
+    console.error('Error checking NFT escrow status:', error);
+    return { inEscrow: false, error: 'Failed to check escrow status' };
+  }
+}
+
+/**
+ * Refresh NFT object ID in database after blockchain operations
+ */
+export async function refreshNFTObjectId(
+  client: SuiClient,
+  nftDatabaseId: string,
+  ownerAddress: string
+): Promise<{ success: boolean; newObjectId?: string; error?: string }> {
+  try {
+    // Get all current NFT object IDs for the owner
+    const currentObjectIds = await getCurrentNFTObjectId(client, ownerAddress);
+    
+    if (currentObjectIds.length === 0) {
+      return { success: false, error: 'No NFT objects found for owner' };
+    }
+
+    // For now, we'll take the first available NFT object ID
+    // In a production system, you might want to match by NFT metadata
+    const newObjectId = currentObjectIds[0];
+
+    // Update the database with the new object ID
+    const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/api/nft/${nftDatabaseId}/update-object-id`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        new_sui_object_id: newObjectId
+      }),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      return { success: false, error: errorData.detail || 'Failed to update object ID' };
+    }
+
+    return { success: true, newObjectId };
+  } catch (error) {
+    console.error('Error refreshing NFT object ID:', error);
+    return { success: false, error: 'Network error' };
+  }
+}
+
+/**
  * Notify backend about new NFT for fraud detection
  */
 export async function notifyBackendNewNFT(nftData: {
@@ -147,7 +266,7 @@ export async function notifyBackendNewNFT(nftData: {
   transactionDigest: string;
 }) {
   try {
-    const response = await fetch(`${import.meta.env.VITE_API_URL}/api/nft/notify-minted`, {
+    const response = await fetch(`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'}/api/nft/notify-minted`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
