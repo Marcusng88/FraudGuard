@@ -21,7 +21,8 @@ import {
   Edit,
   Trash2,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  Lock
 } from 'lucide-react';
 import { useWallet } from '@/hooks/useWallet';
 import { ListingManager } from '@/components/ListingManager';
@@ -38,6 +39,7 @@ const Profile = () => {
   const [isRefreshingBalance, setIsRefreshingBalance] = useState(false);
   const [isProfileEditOpen, setIsProfileEditOpen] = useState(false);
   const [userAvatar, setUserAvatar] = useState<string | null>(null);
+
   const navigate = useNavigate();
 
   // Fetch user's listings
@@ -64,6 +66,10 @@ const Profile = () => {
       setUserAvatar(savedAvatar);
     }
   }, [wallet?.address, refreshBalance]);
+
+  const handleNavigateToSecurity = () => {
+    navigate('/security');
+  };
 
   const formatAddress = (address: string) => {
     return `${address.slice(0, 6)}...${address.slice(-4)}`;
@@ -162,6 +168,9 @@ const Profile = () => {
       </div>
     );
   }
+
+  // Note: Removed authentication requirement for settings tab access
+  // Users can now access settings without a master password
 
   return (
     <div className="min-h-screen bg-background relative">
@@ -385,7 +394,13 @@ const Profile = () => {
                     <Shield className="w-5 h-5 text-muted-foreground" />
                     <span className="text-foreground">Security Settings</span>
                   </div>
-                  <Button variant="outline" size="sm" className="hover:text-white hover:bg-primary/20 hover:border-primary/50">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="hover:text-white hover:bg-primary/20 hover:border-primary/50"
+                    onClick={handleNavigateToSecurity}
+                  >
+                    <Lock className="w-4 h-4 mr-2" />
                     Configure
                   </Button>
                 </div>
