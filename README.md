@@ -9,7 +9,6 @@
 ---
 
 ## **🧑‍💻 Target Audience**
-<img width="1920" height="1080" alt="Yellow and Blue Illustration UI Computer Group Presentation (1)" src="https://github.com/user-attachments/assets/d7e68bc3-431e-4189-a549-f9e340efdf71" />
 
 1.  **NFT Creators/Artists:** Want to protect their original work from plagiarism and theft.
 2.  **NFT Collectors/Traders:** Want to make informed purchasing decisions and avoid scams, fake assets, and manipulated prices.
@@ -18,7 +17,7 @@
 ---
 
 ## **Core Features & User Stories (MVP Scope)**
-
+<img width="1920" height="1080" alt="Yellow and Blue Illustration UI Computer Group Presentation (1)" src="https://github.com/user-attachments/assets/d7e68bc3-431e-4189-a549-f9e340efdf71" />
 
 ### **1. On-Chain Marketplace (Sui)**
 This is the decentralized foundation of the application.
